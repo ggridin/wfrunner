@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wfrunner.local/schemas/config.schema.json",
+  "title": "WaterfallRunner Configuration",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "default_model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "automation_dir": {
+      "type": "string",
+      "minLength": 1
+    },
+    "copilot_command": {
+      "type": "string",
+      "minLength": 1
+    },
+    "default_agent": {
+      "type": "string",
+      "minLength": 1
+    },
+    "git_timeout_seconds": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "git_push_timeout_seconds": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "pre_analysis_timeout_seconds": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "copilot_cli": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "allow_tools": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "deny_tools": {
+          "$ref": "#/$defs/stringArray"
+        }
+      }
+    },
+    "protected_paths": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "paths": {
+          "$ref": "#/$defs/stringArray"
+        }
+      }
+    },
+    "git": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "push_required": {
+          "type": "boolean"
+
+        }
+      }
+    }
+  },
+  "$defs": {
+    "stringArray": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

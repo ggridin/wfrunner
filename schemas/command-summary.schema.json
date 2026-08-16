@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wfrunner.local/schemas/command-summary.schema.json",
+  "title": "WaterfallRunner Command Summary",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "step_id",
+    "command",
+    "exit_code",
+    "status",
+    "duration_seconds",
+    "log_path"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "step_id": {
+      "type": "string",
+      "pattern": "^STEP-[0-9]{3}(\\.[0-9]{3})?$"
+    },
+    "command": {
+      "type": "string"
+    },
+    "exit_code": {
+      "type": "integer"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL",
+        "WARN",
+        "TIMEOUT",
+        "ERROR",
+        "BLOCKED"
+      ]
+    },
+    "duration_seconds": {
+      "type": "number",
+      "minimum": 0
+    },
+    "log_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "command_index": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "command_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stdout_tail": {
+      "type": "string"
+    },
+    "stderr_tail": {
+      "type": "string"
+    },
+    "included_in_prompt": {
+      "type": "boolean"
+    }
+  },
+  "anyOf": [
+    {
+      "required": [
+        "attempt",
+        "command_index",
+        "stdout_tail",
+        "stderr_tail"
+      ]
+    },
+    {
+      "required": [
+        "command_id",
+        "included_in_prompt"
+      ]
+    }
+  ]
+}

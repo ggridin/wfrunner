@@ -1,0 +1,326 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wfrunner.local/schemas/progress.schema.json",
+  "title": "WaterfallRunner Phase 1 Progress File",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "plan_file",
+    "last_run_id",
+    "steps"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "plan_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "last_run_id": {
+      "type": "string",
+      "pattern": "^RUN-[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "steps": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^STEP-[0-9]{3}$"
+      },
+      "patternProperties": {
+        "^STEP-[0-9]{3}$": {
+          "$ref": "#/$defs/stepProgress"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "dateTimeOrNull": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "stringOrNull": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "preAnalysisCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command_id",
+        "status",
+        "summary_path"
+      ],
+      "properties": {
+        "command_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "PASS",
+            "FAIL",
+            "BLOCKED"
+          ]
+        },
+        "summary_path": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "preAnalysisSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "commands"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "NOT_RUN",
+            "PASS",
+            "FAIL",
+            "BLOCKED"
+          ]
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/preAnalysisCommand"
+          }
+        }
+      }
+    },
+    "verificationAttempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attempt",
+        "status",
+        "command_summaries"
+      ],
+      "properties": {
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "PASS",
+            "FAIL",
+            "TIMEOUT"
+          ]
+        },
+        "command_summaries": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "verificationSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "attempts"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "NOT_RUN",
+            "PASS",
+            "FAIL",
+            "TIMEOUT"
+          ]
+        },
+        "attempts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/verificationAttempt"
+          }
+        }
+      }
+    },
+    "failureReason": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "AGENT_BLOCKED",
+            "INVALID_AGENT_RESULT",
+            "SCOPE_VIOLATION",
+            "PRE_ANALYSIS_FAILED",
+            "VERIFICATION_FAILED",
+            "VERIFICATION_TIMEOUT",
+            "HUMAN_GATE",
+            "DIRTY_WORKTREE",
+            "PLAN_VALIDATION_FAILED",
+            "MAX_STEPS_REACHED",
+            "INVALID_PROGRESS_FILE"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "stepProgress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "agent",
+        "model",
+        "started_at",
+        "completed_at",
+        "pre_analysis",
+        "verification",
+        "fix_attempts",
+        "commit",
+        "failure_reason"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "TODO",
+            "READY",
+            "IN_PROGRESS",
+            "BLOCKED",
+            "FAILED",
+            "DONE",
+            "SKIPPED"
+          ]
+        },
+        "agent": {
+          "$ref": "#/$defs/stringOrNull"
+        },
+        "model": {
+          "$ref": "#/$defs/stringOrNull"
+        },
+        "started_at": {
+          "$ref": "#/$defs/dateTimeOrNull"
+        },
+        "completed_at": {
+          "$ref": "#/$defs/dateTimeOrNull"
+        },
+        "pre_analysis": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/preAnalysisSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "verification": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/verificationSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fix_attempts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "commit": {
+          "$ref": "#/$defs/stringOrNull"
+        },
+        "failure_reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/failureReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "IN_PROGRESS"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "started_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "DONE",
+                  "FAILED",
+                  "BLOCKED",
+                  "SKIPPED"
+                ]
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "completed_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wfrunner"
+version = "0.1.0"
+description = "Local specs-driven orchestration for controlled AI-assisted implementation"
+requires-python = ">=3.11"
+dependencies = [
+    "jsonschema>=4.20.0",
+    "pyyaml>=6.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.1.0",
+]
+build = [
+    "pyinstaller>=6.0.0",
+]
+
+[project.scripts]
+wfrunner = "tools.wfrunner:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.pylint.format]
+max-line-length = 120
+
+[tool.setuptools.packages.find]
+include = ["tools*"]
+
+[tool.setuptools.data-files]
+"schemas" = ["schemas/*.json"]
+"docs/schemas" = ["docs/schemas/*.json"]
+"prompts" = ["prompts/system_prompt.implementation.md", "prompts/system_prompt.analysis.md"]
+".github/skills/wfrunner-planner" = [".github/skills/wfrunner-planner/SKILL.md"]
+".github/skills/wfrunner-planner/references" = [".github/skills/wfrunner-planner/references/*.md"]
+".github/skills/wfrunner-planner/scripts" = [".github/skills/wfrunner-planner/scripts/*.py"]

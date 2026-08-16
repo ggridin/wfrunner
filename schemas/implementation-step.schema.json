@@ -1,0 +1,291 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wfrunner.local/schemas/implementation-step.schema.json",
+  "title": "WaterfallRunner Implementation Step Metadata",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "title",
+    "type"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "id": {
+      "$ref": "#/$defs/stepId"
+    },
+    "title": {
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "IMPLEMENTATION",
+        "HUMAN_GATE",
+        "ANALYSIS"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "IMPLEMENTATION"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "$ref": "#/$defs/implementationStep"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "HUMAN_GATE"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "$ref": "#/$defs/humanGateStep"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "ANALYSIS"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "$ref": "#/$defs/analysisStep"
+      }
+    }
+  ],
+  "$defs": {
+    "stepId": {
+      "type": "string",
+      "pattern": "^STEP-[0-9]{3}(\\.[0-9]{3})?$"
+    },
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stringArray": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/nonEmptyString"
+      }
+    },
+    "verificationCommands": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/nonEmptyString"
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commands"
+      ],
+      "properties": {
+        "commands": {
+          "$ref": "#/$defs/verificationCommands"
+        }
+      }
+    },
+    "retry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_fix_attempts"
+      ],
+      "properties": {
+        "max_fix_attempts": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "preAnalysisCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "run",
+        "purpose",
+        "fail_on_nonzero"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "run": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "purpose": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "fail_on_nonzero": {
+          "type": "boolean"
+        },
+        "output_files": {
+          "$ref": "#/$defs/stringArray"
+        }
+      }
+    },
+    "preAnalysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commands"
+      ],
+      "properties": {
+        "commands": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/preAnalysisCommand"
+          }
+        }
+      }
+    },
+    "implementationStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "id",
+        "title",
+        "type",
+        "agent",
+        "model",
+        "allowed_files",
+        "verification",
+        "retry"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "const": 1
+        },
+        "id": {
+          "$ref": "#/$defs/stepId"
+        },
+        "title": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "type": {
+          "const": "IMPLEMENTATION"
+        },
+        "agent": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "model": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "allowed_files": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "pre_analysis": {
+          "$ref": "#/$defs/preAnalysis"
+        },
+        "verification": {
+          "$ref": "#/$defs/verification"
+        },
+        "retry": {
+          "$ref": "#/$defs/retry"
+        }
+      }
+    },
+    "humanGateStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "id",
+        "title",
+        "type"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "const": 1
+        },
+        "id": {
+          "$ref": "#/$defs/stepId"
+        },
+        "title": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "type": {
+          "const": "HUMAN_GATE"
+        },
+        "review_guidance": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "pre_analysis": {
+          "$ref": "#/$defs/preAnalysis"
+        }
+      }
+    },
+    "analysisStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "id",
+        "title",
+        "type",
+        "artifact_files"
+      ],
+      "dependentRequired": {
+        "agent": ["model"],
+        "model": ["agent"]
+      },
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "const": 1
+        },
+        "id": {
+          "$ref": "#/$defs/stepId"
+        },
+        "title": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "type": {
+          "const": "ANALYSIS"
+        },
+        "artifact_files": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "agent": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "model": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "pre_analysis": {
+          "$ref": "#/$defs/preAnalysis"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wfrunner.local/schemas/agent-result.schema.json",
+  "title": "WaterfallRunner Agent Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "step_id",
+    "status"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "step_id": {
+      "type": "string",
+      "pattern": "^STEP-[0-9]{3}(\\.[0-9]{3})?$"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "DONE",
+        "FAILED",
+        "BLOCKED"
+      ]
+    },
+    "notes": {
+      "type": "string"
+    },
+    "stop_condition_hit": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "BLOCKED"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "stop_condition_hit"
+        ]
+      }
+    }
+  ]
+}
