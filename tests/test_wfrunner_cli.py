@@ -14,7 +14,7 @@ from tests.helpers import (
     make_progress,
     write_progress,
 )
-from tools.config import ConfigNotFoundError
+from tools.config import BUILTIN_PROTECTED_PATHS, ConfigNotFoundError
 
 
 # ---------------------------------------------------------------------------
@@ -453,7 +453,7 @@ class TestValidateHandler:
         assert "2" in captured.out  # step count
 
     def test_valid_plan_without_config_exits_0(
-        self, tmp_path: Path,
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
     ) -> None:
         from tools.wfrunner import main
 
@@ -463,7 +463,6 @@ class TestValidateHandler:
         plan_file = tmp_path / "plan.md"
         plan_file.write_text(plan_text, encoding="utf-8")
 
-        # No config file found → ConfigNotFoundError → skip protected-paths
         with mock.patch(
             "tools.wfrunner.load_config",
             side_effect=ConfigNotFoundError("no config"),
@@ -471,6 +470,69 @@ class TestValidateHandler:
             exit_code = main(["validate", str(plan_file)])
 
         assert exit_code == 0
+        assert "using built-in protected paths" in capsys.readouterr().err
+
+    def test_builtin_protected_path_without_config_is_rejected(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from tools.wfrunner import main
+
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text(
+            make_plan(
+                make_implementation_step(
+                    "STEP-001",
+                    title="Touch built-in protected path",
+                    allowed_files=["tools/run_plan.py"],
+                ),
+            ),
+            encoding="utf-8",
+        )
+
+        with mock.patch(
+            "tools.wfrunner.load_config",
+            side_effect=ConfigNotFoundError("no config"),
+        ):
+            exit_code = main(["validate", str(plan_file)])
+
+        assert exit_code == 1
+        captured = capsys.readouterr()
+        assert "protected" in captured.out.lower()
+        assert "using built-in protected paths" in captured.err
+
+    def test_builtin_protected_path_with_project_config_is_rejected(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from tools.wfrunner import main
+
+        project_root = tmp_path / "project"
+        config_dir = project_root / ".wfrunner"
+        config_dir.mkdir(parents=True)
+        (config_dir / "wfrunner.toml").write_text("", encoding="utf-8")
+        plan_file = project_root / "plan.md"
+        plan_file.write_text(
+            make_plan(
+                make_implementation_step(
+                    "STEP-001",
+                    title="Touch built-in protected path",
+                    allowed_files=[BUILTIN_PROTECTED_PATHS[2]],
+                ),
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(project_root)
+        monkeypatch.setattr(
+            "tools.config.user_config_path",
+            lambda: tmp_path / "missing-user.toml",
+        )
+
+        exit_code = main(["validate", str(plan_file)])
+
+        assert exit_code == 1
 
     def test_invalid_plan_exits_1(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str],

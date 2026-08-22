@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from tools import review_base
-from tools.config import ConfigNotFoundError, load_config
+from tools.config import BUILTIN_PROTECTED_PATHS, ConfigNotFoundError, load_config
 from tools.data_path import MissingRuntimeResourceError
 from tools.init_project import init as init_project_init
 from tools.plan_compiler import CompiledPlanError, compile_plan_data
@@ -182,19 +182,27 @@ def _handle_validate(args: argparse.Namespace) -> int:
         return 2
 
     # Try to load config for protected_paths validation
-    protected_paths = None
+    protected_paths = BUILTIN_PROTECTED_PATHS
     if args.config:
         try:
             config = load_config(config_file=Path(args.config))
             protected_paths = config.protected_paths
         except ConfigNotFoundError:
-            pass
+            print(
+                "Note: Project-specific protected paths were unavailable; "
+                "using built-in protected paths.",
+                file=sys.stderr,
+            )
     else:
         try:
             config = load_config(project_root=Path.cwd())
             protected_paths = config.protected_paths
         except ConfigNotFoundError:
-            pass
+            print(
+                "Note: Project-specific protected paths were unavailable; "
+                "using built-in protected paths.",
+                file=sys.stderr,
+            )
 
     try:
         compiled = compile_plan_data(plan_path, protected_paths=protected_paths)
