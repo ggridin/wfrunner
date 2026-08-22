@@ -20,6 +20,7 @@ from tools.constants import (
     FAILURE_CHANGE_DETECTION_UNAVAILABLE,
     FAILURE_DIRTY_WORKTREE, FAILURE_HUMAN_GATE,
     FAILURE_PRE_ANALYSIS_FAILED, FAILURE_SCOPE_VIOLATION,
+    EXIT_USAGE_VALIDATION_ERROR,
     PROGRESS_FIELD_AGENT, PROGRESS_FIELD_COMPLETED_AT,
     PROGRESS_FIELD_FAILURE_REASON, PROGRESS_FIELD_LAST_RUN_ID,
     PROGRESS_FIELD_MODEL, PROGRESS_FIELD_PLAN_FILE, PROGRESS_FIELD_PRE_ANALYSIS,
@@ -72,7 +73,12 @@ class ChangeDetectionUnavailableError(RuntimeError):
 class PrepareError(RuntimeError):
     """Raised when a run cannot be prepared."""
 
-    def __init__(self, message: str, *, exit_code: int = 2) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        exit_code: int = EXIT_USAGE_VALIDATION_ERROR,
+    ) -> None:
         super().__init__(message)
         self.exit_code = exit_code
 

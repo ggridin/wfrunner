@@ -15,6 +15,11 @@ from tests.helpers import (
     write_progress,
 )
 from tools.config import BUILTIN_PROTECTED_PATHS, ConfigNotFoundError
+from tools.constants import (
+    EXIT_EXECUTION_FAILURE,
+    EXIT_SUCCESS,
+    EXIT_USAGE_VALIDATION_ERROR,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -421,7 +426,16 @@ class TestNoArguments:
         from tools.wfrunner import main
 
         exit_code = main([])
-        assert exit_code != 0
+        assert exit_code == EXIT_USAGE_VALIDATION_ERROR
+
+
+class TestExitCodeContract:
+    """Public commands distinguish execution failures from invalid inputs."""
+
+    def test_exit_code_values_are_stable(self) -> None:
+        assert EXIT_SUCCESS == 0
+        assert EXIT_EXECUTION_FAILURE == 1
+        assert EXIT_USAGE_VALIDATION_ERROR == 2
 
 
 # ---------------------------------------------------------------------------
@@ -497,7 +511,7 @@ class TestValidateHandler:
         ):
             exit_code = main(["validate", str(plan_file)])
 
-        assert exit_code == 1
+        assert exit_code == EXIT_EXECUTION_FAILURE
         captured = capsys.readouterr()
         assert "protected" in captured.out.lower()
         assert "using built-in protected paths" in captured.err
@@ -532,7 +546,7 @@ class TestValidateHandler:
 
         exit_code = main(["validate", str(plan_file)])
 
-        assert exit_code == 1
+        assert exit_code == EXIT_EXECUTION_FAILURE
 
     def test_invalid_plan_exits_1(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
@@ -553,7 +567,7 @@ class TestValidateHandler:
         ):
             exit_code = main(["validate", str(plan_file)])
 
-        assert exit_code == 1
+        assert exit_code == EXIT_EXECUTION_FAILURE
         captured = capsys.readouterr()
         out = captured.out + captured.err
         # Should mention errors
@@ -593,7 +607,23 @@ paths = ["custom/"]
 
         exit_code = main(["validate", str(plan_file), "--config", str(config_file)])
 
-        assert exit_code == 1
+        assert exit_code == EXIT_EXECUTION_FAILURE
+
+    def test_explicit_config_not_found_exits_2(self, tmp_path: Path) -> None:
+        from tools.wfrunner import main
+
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text("# Plan\n", encoding="utf-8")
+
+        with mock.patch(
+            "tools.wfrunner.load_config",
+            side_effect=ConfigNotFoundError("no config"),
+        ):
+            exit_code = main(
+                ["validate", str(plan_file), "--config", str(tmp_path / "missing.toml")]
+            )
+
+        assert exit_code == EXIT_USAGE_VALIDATION_ERROR
 
     def test_plan_file_not_found_exits_2(
         self,
@@ -601,7 +631,7 @@ paths = ["custom/"]
         from tools.wfrunner import main
 
         exit_code = main(["validate", "/nonexistent/plan.md"])
-        assert exit_code == 2
+        assert exit_code == EXIT_USAGE_VALIDATION_ERROR
 
 
 class TestStatusHandler:
@@ -718,7 +748,23 @@ class TestStatusHandler:
         from tools.wfrunner import main
 
         exit_code = main(["status", "/nonexistent/plan.md"])
-        assert exit_code == 2
+        assert exit_code == EXIT_USAGE_VALIDATION_ERROR
+
+    def test_explicit_config_not_found_exits_2(self, tmp_path: Path) -> None:
+        from tools.wfrunner import main
+
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text("# Plan\n", encoding="utf-8")
+
+        with mock.patch(
+            "tools.wfrunner.load_config",
+            side_effect=ConfigNotFoundError("no config"),
+        ):
+            exit_code = main(
+                ["status", str(plan_file), "--config", str(tmp_path / "missing.toml")]
+            )
+
+        assert exit_code == EXIT_USAGE_VALIDATION_ERROR
 
 
 # ---------------------------------------------------------------------------
@@ -747,11 +793,13 @@ class TestRunHandler:
 
         config = make_default_config()
         error = PrepareError(diagnostic)
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text("# Plan\n", encoding="utf-8")
         with (
             mock.patch("tools.wfrunner._load_run_config", return_value=config),
             mock.patch("tools.run_plan.prepare_run", side_effect=error),
         ):
-            exit_code = main(["run", str(tmp_path / "plan.md"), "--resume"])
+            exit_code = main(["run", str(plan_file), "--resume"])
 
         assert exit_code == error.exit_code
         assert diagnostic in capsys.readouterr().err
@@ -924,7 +972,16 @@ class TestRunHandler:
         ):
             exit_code = main(["run", str(plan_file)])
 
-        assert exit_code != 0
+        assert exit_code == EXIT_USAGE_VALIDATION_ERROR
         captured = capsys.readouterr()
         out = captured.out + captured.err
         assert len(out) > 0
+
+    def test_missing_plan_exits_2_before_config_loading(self, tmp_path: Path) -> None:
+        from tools.wfrunner import main
+
+        with mock.patch("tools.wfrunner._load_run_config") as load_config_mock:
+            exit_code = main(["run", str(tmp_path / "missing-plan.md")])
+
+        assert exit_code == EXIT_USAGE_VALIDATION_ERROR
+        load_config_mock.assert_not_called()

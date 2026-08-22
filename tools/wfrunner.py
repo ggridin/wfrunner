@@ -22,14 +22,20 @@ from typing import Any
 
 from tools import review_base
 from tools.config import BUILTIN_PROTECTED_PATHS, ConfigNotFoundError, load_config
-from tools.constants import PROGRESS_FIELD_STATE, PROGRESS_FIELD_STEPS
+from tools.constants import (
+    EXIT_EXECUTION_FAILURE,
+    EXIT_SUCCESS,
+    EXIT_USAGE_VALIDATION_ERROR,
+    PROGRESS_FIELD_STATE,
+    PROGRESS_FIELD_STEPS,
+)
 from tools.data_path import MissingRuntimeResourceError
 from tools.init_project import init as init_project_init
 from tools.plan_compiler import CompiledPlanError, compile_plan_data
 from tools.plan_parser import parse_plan_file
 
 
-PACKAGING_ERROR_EXIT_CODE = 2
+PACKAGING_ERROR_EXIT_CODE = EXIT_USAGE_VALIDATION_ERROR
 
 
 def _get_version() -> str:
@@ -132,6 +138,11 @@ def _handle_run(args: argparse.Namespace) -> int:
     """Execute the run subcommand."""
     from tools.run_plan import PrepareError, prepare_run, reset_run, reset_current_step, run
 
+    plan_path = Path(args.plan_path)
+    if not plan_path.exists():
+        print(f"Error: Plan file not found: {plan_path}", file=sys.stderr)
+        return EXIT_USAGE_VALIDATION_ERROR
+
     try:
         config = _load_run_config(args)
     except ConfigNotFoundError as exc:
@@ -139,7 +150,7 @@ def _handle_run(args: argparse.Namespace) -> int:
             f"Error: {exc}\nRun 'wfrunner init' to create configuration.",
             file=sys.stderr,
         )
-        return 1
+        return EXIT_USAGE_VALIDATION_ERROR
 
     if args.reset:
         return reset_run(config)
@@ -159,7 +170,7 @@ def _handle_run(args: argparse.Namespace) -> int:
             print(f"Error: {exc}", file=sys.stderr)
             return exc.exit_code
         print("Preparation complete.")
-        return 0
+        return EXIT_SUCCESS
 
     # Default: whole-plan mode
     try:
@@ -182,7 +193,7 @@ def _handle_validate(args: argparse.Namespace) -> int:
     plan_path = Path(args.plan_path)
     if not plan_path.exists():
         print(f"Error: Plan file not found: {plan_path}", file=sys.stderr)
-        return 2
+        return EXIT_USAGE_VALIDATION_ERROR
 
     # Try to load config for protected_paths validation
     protected_paths = BUILTIN_PROTECTED_PATHS
@@ -190,12 +201,12 @@ def _handle_validate(args: argparse.Namespace) -> int:
         try:
             config = load_config(config_file=Path(args.config))
             protected_paths = config.protected_paths
-        except ConfigNotFoundError:
+        except ConfigNotFoundError as exc:
             print(
-                "Note: Project-specific protected paths were unavailable; "
-                "using built-in protected paths.",
+                f"Error: {exc}\nRun 'wfrunner init' to create configuration.",
                 file=sys.stderr,
             )
+            return EXIT_USAGE_VALIDATION_ERROR
     else:
         try:
             config = load_config(project_root=Path.cwd())
@@ -211,10 +222,10 @@ def _handle_validate(args: argparse.Namespace) -> int:
         compiled = compile_plan_data(plan_path, protected_paths=protected_paths)
     except CompiledPlanError as exc:
         print(f"Validation failed: {exc}")
-        return 1
+        return EXIT_EXECUTION_FAILURE
 
     print(f"Plan is valid. {len(compiled['steps'])} step(s) found.")
-    return 0
+    return EXIT_SUCCESS
 
 
 def _handle_status(args: argparse.Namespace) -> int:
@@ -222,12 +233,12 @@ def _handle_status(args: argparse.Namespace) -> int:
     plan_path = Path(args.plan_path)
     if not plan_path.exists():
         print(f"Error: Plan file not found: {plan_path}", file=sys.stderr)
-        return 2
+        return EXIT_USAGE_VALIDATION_ERROR
 
     parse_result = parse_plan_file(plan_path)
     if not parse_result.ok:
         print(f"Error: Could not parse plan: {plan_path}", file=sys.stderr)
-        return 1
+        return EXIT_EXECUTION_FAILURE
 
     automation_dir = Path(".wfrunner") / "automation"
     try:
@@ -239,14 +250,14 @@ def _handle_status(args: argparse.Namespace) -> int:
                 f"Error: {exc}\nRun 'wfrunner init' to create configuration.",
                 file=sys.stderr,
             )
-            return 1
+            return EXIT_USAGE_VALIDATION_ERROR
 
     # Look for progress.json
     progress_path = automation_dir / "progress.json"
 
     if not progress_path.exists():
         print("No execution data found.")
-        return 0
+        return EXIT_SUCCESS
 
     progress = json.loads(progress_path.read_text(encoding="utf-8"))
     steps_progress = progress.get(PROGRESS_FIELD_STEPS, {})
@@ -260,7 +271,7 @@ def _handle_status(args: argparse.Namespace) -> int:
         step_state = steps_progress.get(step_id, {}).get(PROGRESS_FIELD_STATE, "UNKNOWN")
         print(f"{step_id:<15} {title:<40} {step_state:<15}")
 
-    return 0
+    return EXIT_SUCCESS
 
 
 def _handle_init(_args: argparse.Namespace) -> int:
@@ -277,7 +288,7 @@ def _handle_review_base(args: argparse.Namespace) -> int:
         "Error: review-base requires a subcommand: 'record' or 'diff'.",
         file=sys.stderr,
     )
-    return 2
+    return EXIT_USAGE_VALIDATION_ERROR
 
 
 _HANDLERS = {
@@ -305,14 +316,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if not argv:
         parser.print_help(sys.stderr)
-        return 2
+        return EXIT_USAGE_VALIDATION_ERROR
 
     args = parser.parse_args(argv)
 
     handler = _HANDLERS.get(args.subcommand)
     if handler is None:
         parser.print_help(sys.stderr)
-        return 2
+        return EXIT_USAGE_VALIDATION_ERROR
 
     try:
         return handler(args)

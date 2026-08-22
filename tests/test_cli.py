@@ -22,6 +22,7 @@ from tests.helpers import (
     write_progress,
 )
 from tools.config import GitConfig, WaterfallRunnerConfig
+from tools.constants import EXIT_USAGE_VALIDATION_ERROR
 from tools.orchestrator.change_detector import FakeChangeDetector
 from tools.plan_parser import ParsedStep
 from tools.run_plan import (
@@ -86,7 +87,7 @@ class TestValidationErrors:
         with pytest.raises(PrepareError, match="Plan file not found") as exc_info:
             prepare_run(str(tmp_path / "nonexistent.md"), config)
 
-        assert exc_info.value.exit_code == 2
+        assert exc_info.value.exit_code == EXIT_USAGE_VALIDATION_ERROR
 
     def test_invalid_plan_returns_2(self, tmp_path: Path) -> None:
         # Plan with a broken step (missing required fields).
@@ -97,7 +98,7 @@ class TestValidationErrors:
         with pytest.raises(PrepareError) as exc_info:
             prepare_run(str(plan_file), config)
 
-        assert exc_info.value.exit_code == 2
+        assert exc_info.value.exit_code == EXIT_USAGE_VALIDATION_ERROR
 
 
 class TestNoScopeEnforcementFlag:
