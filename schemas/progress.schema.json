@@ -264,6 +264,7 @@
           "$ref": "#/$defs/stringOrNull"
         },
         "failure_reason": {
+          "description": "Null for successful outcomes and planned HUMAN_GATE pauses; populated for failures and blocks. Legacy HUMAN_GATE records may contain a failure reason.",
           "anyOf": [
             {
               "$ref": "#/$defs/failureReason"

@@ -181,6 +181,12 @@ The built-in protected paths are:
 Protected-path changes require a prior `HUMAN_GATE`. Keep that gate close to
 the implementation step and describe the decision being approved.
 
+Stopping at a `HUMAN_GATE` is a successful planned pause. New progress records
+use `state: BLOCKED` with `failure_reason: null`, and whole-plan reports list
+the step under **Gated Steps**, not **Blocked Steps**. Auto-approved gates use
+`state: DONE`. Legacy progress records with a populated `HUMAN_GATE` failure
+reason remain valid and are reported as gated.
+
 All runtime JSON schemas, including `progress.schema.json`, live under
 `schemas/`.
 

@@ -230,8 +230,12 @@ class TestHumanGateStopsExecution:
         progress = _load_progress(automation_dir)
         assert progress["steps"]["STEP-001"]["state"] == "DONE"
         assert progress["steps"]["STEP-002"]["state"] == "BLOCKED"
-        assert progress["steps"]["STEP-002"]["failure_reason"]["code"] == "HUMAN_GATE"
+        assert progress["steps"]["STEP-002"]["failure_reason"] is None
         assert progress["steps"]["STEP-003"]["state"] == "TODO"
+
+        report = (automation_dir / "whole-plan-report.md").read_text(encoding="utf-8")
+        assert "## Gated Steps" in report
+        assert "## Blocked Steps" not in report
 
 
 # ---------------------------------------------------------------------------

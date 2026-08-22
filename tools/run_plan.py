@@ -18,7 +18,7 @@ from tools.constants import (
     MODEL_DEFAULT,
     FR_CODE, FR_MESSAGE,
     FAILURE_CHANGE_DETECTION_UNAVAILABLE,
-    FAILURE_DIRTY_WORKTREE, FAILURE_HUMAN_GATE,
+    FAILURE_DIRTY_WORKTREE,
     FAILURE_PRE_ANALYSIS_FAILED, FAILURE_SCOPE_VIOLATION,
     EXIT_USAGE_VALIDATION_ERROR,
     PROGRESS_FIELD_AGENT, PROGRESS_FIELD_COMPLETED_AT,
@@ -247,7 +247,6 @@ def _finish_human_gate_with_pre_analysis(
             log_path,
             step_id,
             STATE_BLOCKED,
-            failure_reason={FR_CODE: FAILURE_HUMAN_GATE, FR_MESSAGE: f"Human review required at {step_id}."},
             stop_reason=STOP_HUMAN_GATE,
             extra_fields={PROGRESS_FIELD_PRE_ANALYSIS: summary},
         )
@@ -616,7 +615,6 @@ def run(
             stop_reason = STOP_HUMAN_GATE
             _finish_step(
                 progress, progress_path, log_path, step_id, STATE_BLOCKED,
-                failure_reason={FR_CODE: FAILURE_HUMAN_GATE, FR_MESSAGE: f"Human review required at {step_id}."},
                 stop_reason=STOP_HUMAN_GATE,
             )
             print(f"Stopped at HUMAN_GATE: {step_id} — {step.heading_title}")

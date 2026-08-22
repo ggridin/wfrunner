@@ -660,6 +660,29 @@ class TestProgressSchemaValidationOnLoad:
 
         assert loaded == progress
 
+    def test_legacy_blocked_human_gate_loads_successfully(
+        self, tmp_path: Path
+    ) -> None:
+        """Old HUMAN_GATE failure reasons remain valid with null used for new gates."""
+        progress = make_progress(
+            steps={
+                "STEP-001": {
+                    "state": "BLOCKED",
+                    "completed_at": "2025-01-01T00:01:00Z",
+                    "failure_reason": {
+                        "code": "HUMAN_GATE",
+                        "message": "Human review required at STEP-001.",
+                    },
+                },
+            }
+        )
+        progress_path = tmp_path / "progress.json"
+        write_progress(progress_path, progress)
+
+        loaded = load_progress(progress_path)
+
+        assert loaded == progress
+
     def test_invalid_schema_version_raises_validation_error(self, tmp_path: Path) -> None:
         """schema_version must match the schema const."""
         progress = make_progress()
