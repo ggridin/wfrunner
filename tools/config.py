@@ -13,7 +13,7 @@ from typing import Any
 import jsonschema
 
 from tools.constants import AGENT_DEFAULT, MODEL_DEFAULT
-from tools.data_path import get_project_root
+from tools.data_path import require_runtime_resource
 
 
 class ConfigNotFoundError(Exception):
@@ -300,7 +300,10 @@ def _require_string(key: str, value: Any) -> str:
 
 
 def _validate_config_schema(config_path: Path, data: dict[str, Any]) -> None:
-    schema_path = get_project_root() / "schemas" / "config.schema.json"
+    schema_path = require_runtime_resource(
+        Path("schemas") / "config.schema.json",
+        description="config schema",
+    )
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     validator = jsonschema.Draft202012Validator(schema)
     errors = sorted(validator.iter_errors(data), key=lambda error: list(error.path))

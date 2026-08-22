@@ -4,18 +4,22 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import jsonschema
 
 from tools.constants import AGENT_STATUS_BLOCKED, AGENT_STATUS_FAILED
-from tools.data_path import get_project_root
+from tools.data_path import require_runtime_resource
 from tools.orchestrator.agent_adapter import AgentAdapter, AgentInvocationRequest, AgentResult
 
 
 def _load_agent_result_schema() -> dict[str, Any]:
     """Load the agent-result JSON schema."""
-    schema_path = get_project_root() / "schemas" / "agent-result.schema.json"
+    schema_path = require_runtime_resource(
+        Path("schemas") / "agent-result.schema.json",
+        description="agent result schema",
+    )
     return json.loads(schema_path.read_text(encoding="utf-8"))
 
 

@@ -6,7 +6,7 @@ from pathlib import Path
 from shutil import copy2
 
 from tools.config import BUILTIN_PROTECTED_PATHS, DEFAULT_CONFIG
-from tools.data_path import get_project_root
+from tools.data_path import get_project_root, require_runtime_resource
 
 _SENTINEL_START = "# >>> WaterfallRunner managed >>>"
 _SENTINEL_END = "# <<< WaterfallRunner managed <<<"
@@ -219,7 +219,6 @@ def _create_config(root: Path) -> None:
 
 
 def _copy_prompts(root: Path) -> None:
-    src_dir = get_project_root() / "prompts"
     dst_dir = root / ".wfrunner" / "prompts"
     dst_dir.mkdir(parents=True, exist_ok=True)
     for name in ("system_prompt.implementation.md", "system_prompt.analysis.md"):
@@ -227,7 +226,10 @@ def _copy_prompts(root: Path) -> None:
         if dst.exists():
             print(f"  skip  {dst.relative_to(root)} (already exists)")
             continue
-        src = src_dir / name
+        src = require_runtime_resource(
+            Path("prompts") / name,
+            description=f"system prompt {name}",
+        )
         dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
         print(f"  create  {dst.relative_to(root)}")
 

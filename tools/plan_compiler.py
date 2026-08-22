@@ -27,7 +27,7 @@ from tools.constants import (
     STEP_TYPE_HUMAN_GATE,
     STEP_TYPE_IMPLEMENTATION,
 )
-from tools.data_path import get_project_root
+from tools.data_path import get_project_root, require_runtime_resource
 from tools.plan_parser import ParsedStep, parse_plan_file
 from tools.plan_validator import validate_plan
 
@@ -205,6 +205,9 @@ def _extract_step_body(step: ParsedStep, source_text: str) -> str:
 
 
 def _validate_compiled_plan(compiled: dict[str, Any]) -> None:
-    schema_path = get_project_root() / "schemas" / "compiled-plan.schema.json"
+    schema_path = require_runtime_resource(
+        Path("schemas") / "compiled-plan.schema.json",
+        description="compiled plan schema",
+    )
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     jsonschema.validate(instance=compiled, schema=schema)

@@ -10,7 +10,7 @@ from typing import Any
 
 import jsonschema
 
-from tools.data_path import get_project_root
+from tools.data_path import get_project_root, require_runtime_resource
 
 from tools.constants import (
     FIELD_ALLOWED_FILES,
@@ -51,6 +51,7 @@ def _load_step_schema(schemas_dir: Path | None = None) -> dict[str, Any]:
     if schemas_dir is None:
         schemas_dir = get_project_root() / "schemas"
     schema_path = schemas_dir / "implementation-step.schema.json"
+    schema_path = require_runtime_resource(schema_path, description="implementation step schema")
     return json.loads(schema_path.read_text(encoding="utf-8"))
 
 
