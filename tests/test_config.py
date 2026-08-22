@@ -556,6 +556,45 @@ deny_tools = ["shell(curl)", "shell(wget)"]
         for builtin in BUILTIN_DENY_TOOLS:
             assert builtin in config.copilot_cli.deny_tools
 
+    def test_project_layer_cannot_remove_user_security_restrictions(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        user_path = tmp_path / "user_config" / "config.toml"
+        self._write_user_config(
+            user_path,
+            """
+[copilot_cli]
+deny_tools = ["shell(user-only)"]
+
+[protected_paths]
+paths = ["user-protected/"]
+""".lstrip(),
+        )
+        monkeypatch.setattr("tools.config.user_config_path", lambda: user_path)
+        _write_wfrunner_toml(
+            tmp_path,
+            """
+[copilot_cli]
+deny_tools = ["shell(project-only)"]
+
+[protected_paths]
+paths = ["project-protected/"]
+""".lstrip(),
+        )
+
+        config = load_config(tmp_path)
+
+        assert set(config.copilot_cli.deny_tools) == set(BUILTIN_DENY_TOOLS) | {
+            "shell(user-only)",
+            "shell(project-only)",
+        }
+        assert set(config.protected_paths) == EXPECTED_BUILTIN_PROTECTED_PATHS | {
+            "user-protected/",
+            "project-protected/",
+        }
+
 
 # ---------------------------------------------------------------------------
 # STEP-007 — Config no-defaults and ConfigNotFoundError tests

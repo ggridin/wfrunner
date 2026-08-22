@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import platform
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import tomllib
 from typing import Any
@@ -93,6 +93,17 @@ class GitConfig:
 
 
 @dataclass(frozen=True)
+class ConfigLayer:
+    """Values contributed by one configuration source."""
+
+    values: dict[str, Any] = field(default_factory=dict)
+    copilot_cli: dict[str, Any] = field(default_factory=dict)
+    git: dict[str, Any] = field(default_factory=dict)
+    deny_tools: frozenset[str] = frozenset()
+    protected_paths: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True)
 class WaterfallRunnerConfig:
     """WaterfallRunner configuration values."""
 
@@ -149,65 +160,67 @@ def load_config(
     Raises:
         ConfigNotFoundError: If no TOML config source is found.
     """
-    # Hardcoded template defaults (same as what `wfrunner init` writes)
-    values: dict[str, Any] = {
-        key: value for key, value in DEFAULT_CONFIG.items() if not isinstance(value, dict)
-    }
-    deny_tools_union = set(BUILTIN_DENY_TOOLS)
-    protected_paths_union: set[str] = set(BUILTIN_PROTECTED_PATHS)
-    cli_config_values: dict[str, Any] = {}
-    git_values: dict[str, Any] = {}
-    has_layers = False
+    layers = [
+        ConfigLayer(
+            values={
+                key: value
+                for key, value in DEFAULT_CONFIG.items()
+                if not isinstance(value, dict)
+            },
+            deny_tools=frozenset(BUILTIN_DENY_TOOLS),
+            protected_paths=frozenset(BUILTIN_PROTECTED_PATHS),
+        )
+    ]
+    has_config_source = False
 
     if config_file is not None:
         explicit_path = Path(config_file)
         if not explicit_path.exists():
             raise ConfigNotFoundError(f"Config file not found: {explicit_path}")
-        _merge_toml_layer(explicit_path, values, cli_config_values, git_values,
-                          deny_tools_union, protected_paths_union)
-        has_layers = True
+        layers.append(_load_toml_layer(explicit_path))
+        has_config_source = True
     else:
         # Layer 2: user config
         user_path = user_config_path()
         if user_path.exists():
-            _merge_toml_layer(user_path, values, cli_config_values, git_values,
-                              deny_tools_union, protected_paths_union)
-            has_layers = True
+            layers.append(_load_toml_layer(user_path))
+            has_config_source = True
 
         # Layer 3: project config
         root = Path.cwd() if project_root is None else Path(project_root)
         project_path = root / ".wfrunner" / "wfrunner.toml"
         if project_path.exists():
-            _merge_toml_layer(project_path, values, cli_config_values, git_values,
-                              deny_tools_union, protected_paths_union)
-            has_layers = True
+            layers.append(_load_toml_layer(project_path))
+            has_config_source = True
 
     # Layer 4: CLI overrides
     if cli_overrides:
-        applied_override = False
+        override_values: dict[str, Any] = {}
         for key in ("default_model", "automation_dir", "copilot_command", "default_agent"):
             if key in cli_overrides:
-                values[key] = _require_string(key, cli_overrides[key])
-                applied_override = True
-        if applied_override:
-            has_layers = True
+                override_values[key] = _require_string(key, cli_overrides[key])
+        if override_values:
+            layers.append(ConfigLayer(values=override_values))
+            has_config_source = True
 
-    if not has_layers:
+    if not has_config_source:
         raise ConfigNotFoundError(
             "No configuration found. Run 'wfrunner init' to create "
             ".wfrunner/wfrunner.toml, or pass --config."
         )
 
-    # Enforce built-in floor for security settings
-    deny_tools_union |= set(BUILTIN_DENY_TOOLS)
-    protected_paths_union |= set(BUILTIN_PROTECTED_PATHS)
+    merged = ConfigLayer()
+    for layer in layers:
+        merged = _merge_config_layers(merged, layer)
+
+    values = dict(merged.values)
     # Build final copilot_cli config
-    final_deny_tools = tuple(sorted(deny_tools_union))
+    final_deny_tools = tuple(sorted(merged.deny_tools))
     default_cli_timeout = DEFAULT_CONFIG["copilot_cli"]["timeout_seconds"]
-    if cli_config_values:
+    if merged.copilot_cli:
         values["copilot_cli"] = CopilotCliConfig(
-            timeout_seconds=cli_config_values.get("timeout_seconds", default_cli_timeout),
-            allow_tools=cli_config_values.get("allow_tools", BUILTIN_ALLOW_TOOLS),
+            timeout_seconds=merged.copilot_cli.get("timeout_seconds", default_cli_timeout),
+            allow_tools=merged.copilot_cli.get("allow_tools", BUILTIN_ALLOW_TOOLS),
             deny_tools=final_deny_tools,
         )
     else:
@@ -217,27 +230,37 @@ def load_config(
             deny_tools=final_deny_tools,
         )
 
-    values["protected_paths"] = tuple(sorted(protected_paths_union))
+    values["protected_paths"] = tuple(sorted(merged.protected_paths))
 
     values["git"] = GitConfig(
-        push_required=git_values.get("push_required", DEFAULT_CONFIG["git"]["push_required"]),
+        push_required=merged.git.get("push_required", DEFAULT_CONFIG["git"]["push_required"]),
     )
 
     return WaterfallRunnerConfig(**values)
 
 
-def _merge_toml_layer(
-    config_path: Path,
-    values: dict[str, Any],
-    cli_config_values: dict[str, Any],
-    git_values: dict[str, Any],
-    deny_tools_union: set[str],
-    protected_paths_union: set[str],
-) -> None:
-    """Merge a single TOML config file into the accumulator dicts."""
+def _merge_config_layers(base: ConfigLayer, override: ConfigLayer) -> ConfigLayer:
+    """Merge one config layer over another while preserving security floors."""
+    return ConfigLayer(
+        values=base.values | override.values,
+        copilot_cli=base.copilot_cli | override.copilot_cli,
+        git=base.git | override.git,
+        deny_tools=base.deny_tools | override.deny_tools,
+        protected_paths=base.protected_paths | override.protected_paths,
+    )
+
+
+def _load_toml_layer(config_path: Path) -> ConfigLayer:
+    """Load and validate the values contributed by one TOML file."""
     with config_path.open("rb") as f:
         data = tomllib.load(f)
     _validate_config_schema(config_path, data)
+
+    values: dict[str, Any] = {}
+    cli_config_values: dict[str, Any] = {}
+    git_values: dict[str, Any] = {}
+    deny_tools: frozenset[str] = frozenset()
+    protected_paths: frozenset[str] = frozenset()
 
     for key in ("default_model", "automation_dir", "copilot_command", "default_agent"):
         if key in data:
@@ -265,7 +288,7 @@ def _merge_toml_layer(
                     if not all(isinstance(t, str) for t in tools_val):
                         raise ValueError(f"{config_path}: {tools_key} must be a list of strings")
                     if tools_key == "deny_tools":
-                        deny_tools_union |= set(tools_val)
+                        deny_tools = frozenset(tools_val)
                     else:
                         cli_config_values[tools_key] = tuple(tools_val)
                 else:
@@ -278,7 +301,7 @@ def _merge_toml_layer(
             if isinstance(paths_val, list):
                 if not all(isinstance(p, str) for p in paths_val):
                     raise ValueError(f"{config_path}: paths must be a list of strings")
-                protected_paths_union |= set(paths_val)
+                protected_paths = frozenset(paths_val)
             else:
                 raise ValueError(f"{config_path}: paths must be a list of strings")
 
@@ -290,6 +313,14 @@ def _merge_toml_layer(
                 if not isinstance(bool_val, bool):
                     raise ValueError(f"{config_path}: {bool_key} must be a bool")
                 git_values[bool_key] = bool_val
+
+    return ConfigLayer(
+        values=values,
+        copilot_cli=cli_config_values,
+        git=git_values,
+        deny_tools=deny_tools,
+        protected_paths=protected_paths,
+    )
 
 
 def _require_string(key: str, value: Any) -> str:
