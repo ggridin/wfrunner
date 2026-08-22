@@ -12,34 +12,29 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from tools.constants import (
-    AGENT_STATUS_FAILED,
-    FIELD_AGENT, FIELD_ALLOWED_FILES, FIELD_COMMANDS, FIELD_ID, FIELD_MODEL,
+    FIELD_AGENT, FIELD_COMMANDS, FIELD_ID, FIELD_MODEL,
     FIELD_PRE_ANALYSIS, FIELD_TYPE, FIELD_VERIFICATION,
     AGENT_DEFAULT,
     MODEL_DEFAULT,
     FR_CODE, FR_MESSAGE,
-    FAILURE_AGENT_BLOCKED, FAILURE_CHANGE_DETECTION_UNAVAILABLE,
+    FAILURE_CHANGE_DETECTION_UNAVAILABLE,
     FAILURE_DIRTY_WORKTREE, FAILURE_HUMAN_GATE,
-    FAILURE_INVALID_AGENT_RESULT, FAILURE_PRE_ANALYSIS_FAILED,
-    FAILURE_SCOPE_VIOLATION, FAILURE_VERIFICATION_FAILED,
-    PROGRESS_FIELD_AGENT, PROGRESS_FIELD_COMMIT, PROGRESS_FIELD_COMPLETED_AT,
-    PROGRESS_FIELD_FAILURE_REASON, PROGRESS_FIELD_FIX_ATTEMPTS, PROGRESS_FIELD_LAST_RUN_ID,
+    FAILURE_PRE_ANALYSIS_FAILED, FAILURE_SCOPE_VIOLATION,
+    PROGRESS_FIELD_AGENT, PROGRESS_FIELD_COMPLETED_AT,
+    PROGRESS_FIELD_FAILURE_REASON, PROGRESS_FIELD_LAST_RUN_ID,
     PROGRESS_FIELD_MODEL, PROGRESS_FIELD_PLAN_FILE, PROGRESS_FIELD_PRE_ANALYSIS,
     PROGRESS_FIELD_SCHEMA_VERSION, PROGRESS_FIELD_STARTED_AT, PROGRESS_FIELD_STATE,
-    PROGRESS_FIELD_STEPS, PROGRESS_FIELD_VERIFICATION,
+    PROGRESS_FIELD_STEPS,
     STATE_BLOCKED, STATE_DONE, STATE_FAILED, STATE_IN_PROGRESS, STATE_TODO,
-    STOP_AGENT_BLOCKED, STOP_ALL_COMPLETE, STOP_BLOCKED, STOP_DIRTY_WORKTREE,
-    STOP_FAILED, STOP_HUMAN_GATE, STOP_INVALID_AGENT_RESULT,
-    STOP_ONE_STEP, STOP_PRE_ANALYSIS_FAILED, STOP_SCOPE_VIOLATION,
-    STOP_VERIFICATION_FAILED,
+    STOP_ALL_COMPLETE, STOP_BLOCKED, STOP_FAILED, STOP_HUMAN_GATE,
+    STOP_ONE_STEP, STOP_PRE_ANALYSIS_FAILED,
     ScriptOutcome,
     STEP_TYPE_ANALYSIS,
     VERIFY_FAIL, VERIFY_PASS,
 )
 from tools.plan_parser import ParsedStep
 from tools.config import WaterfallRunnerConfig
-from tools.orchestrator.agent_adapter import AgentAdapter, AgentInvocationRequest
-from tools.orchestrator.agent_invocation import invoke_agent
+from tools.orchestrator.agent_adapter import AgentAdapter
 from tools.orchestrator.change_detector import ChangeDetector
 from tools.orchestrator.copilot_cli_adapter import CopilotCliAdapter
 from tools.orchestrator.git import (
@@ -49,13 +44,19 @@ from tools.orchestrator.git import (
     is_worktree_clean as _is_worktree_clean,
 )
 from tools.orchestrator.pre_analysis_runner import run_pre_analysis
+from tools.orchestrator.outcomes import STEP_OUTCOME_POLICY, StepOutcome
 from tools.orchestrator.progress_manager import ProgressValidationError, init_step_progress, load_progress, save_progress
 from tools.orchestrator.report_generator import generate_whole_plan_report
 from tools.orchestrator.retry_controller import RetryController
 from tools.orchestrator.run_logger import append_log_entry
-from tools.orchestrator.scope_enforcer import check_allowed_files, check_protected_files
+from tools.orchestrator.scope_enforcer import check_protected_files
 from tools.orchestrator.step_selector import select_next_step
-from tools.orchestrator.verification import VerificationResult, run_verification
+from tools.orchestrator.step_executor import (
+    StepExecutionContext,
+    execute_step,
+    system_prompt_path_for_type,
+)
+from tools.orchestrator.verification import run_verification
 from tools.plan_compiler import CompiledPlanDriftError, CompiledPlanError, load_compiled_plan_for_run
 
 
@@ -97,76 +98,12 @@ def _warn_if_protected_paths_disabled(config: WaterfallRunnerConfig) -> None:
         )
 
 
-def _verification_attempt_status(result: VerificationResult) -> str:
-    """Return the schema status for a verification attempt."""
-    if result.ok:
-        return VERIFY_PASS
-
-    for command_result in result.command_results:
-        if command_result.status != VERIFY_PASS:
-            return command_result.status
-
-    return VERIFY_FAIL
-
-
-def _verification_summary(status: str, attempts: list[VerificationResult]) -> dict[str, Any]:
-    """Build the progress.json verification summary from executed attempts."""
-    return {
-        "status": status,
-        "attempts": [
-            {
-                "attempt": attempt_number,
-                "status": _verification_attempt_status(attempt_result),
-                "command_summaries": [
-                    str(Path(command_result.log_path).with_suffix(".summary.json"))
-                    for command_result in attempt_result.command_results
-                ],
-            }
-            for attempt_number, attempt_result in enumerate(attempts, start=1)
-        ],
-    }
-
-
 class _ScriptCommandResult(Protocol):
     outcome: ScriptOutcome
 
 
 def _has_script_error(command_results: Iterable[_ScriptCommandResult]) -> bool:
     return any(command_result.outcome == ScriptOutcome.ERROR for command_result in command_results)
-
-
-def _analysis_git_snapshot(config: WaterfallRunnerConfig) -> str | None:
-    try:
-        result = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=all"],
-            capture_output=True,
-            text=True,
-            timeout=_git_timeout(config),
-            check=False,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return None
-
-    if result.returncode != 0:
-        return None
-    return result.stdout
-
-
-def _analysis_changed(
-    *,
-    change_detector: ChangeDetector | None,
-    before_git_snapshot: str | None,
-    clean_fallback: bool,
-    config: WaterfallRunnerConfig,
-) -> bool:
-    if change_detector is not None:
-        return bool(change_detector.detect_changes())
-    if before_git_snapshot is not None:
-        after_git_snapshot = _analysis_git_snapshot(config)
-        return after_git_snapshot is None or after_git_snapshot != before_git_snapshot
-    if clean_fallback:
-        return not _is_worktree_clean(config)
-    return True
 
 
 def _init_progress(
@@ -370,21 +307,9 @@ def _check_resume_consistency(
     return None
 
 
-_SYSTEM_PROMPT_IMPLEMENTATION = "system_prompt.implementation.md"
-_SYSTEM_PROMPT_ANALYSIS = "system_prompt.analysis.md"
-
-
 def _system_prompt_path_for_type(step_type: str | None, automation_dir: Path) -> str:
     """Return the scaffolded per-type system prompt path for a step type."""
-    prompt_name = _SYSTEM_PROMPT_ANALYSIS if step_type == STEP_TYPE_ANALYSIS else _SYSTEM_PROMPT_IMPLEMENTATION
-    candidates = [
-        automation_dir.parent / "prompts" / prompt_name,
-        Path(".wfrunner") / "prompts" / prompt_name,
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return str(candidate.resolve())
-    return str(candidates[0].resolve())
+    return system_prompt_path_for_type(step_type, automation_dir)
 
 
 def _verification_step_for_current_shell(step: ParsedStep) -> ParsedStep:
@@ -558,6 +483,23 @@ def reset_current_step(config: Any) -> int:
     return 0
 
 
+class AdapterFactory(Protocol):
+    """Factory for constructing the configured agent adapter."""
+
+    def __call__(
+        self,
+        config: WaterfallRunnerConfig,
+        automation_dir: Path,
+    ) -> AgentAdapter: ...
+
+
+def _default_adapter_factory(
+    config: WaterfallRunnerConfig,
+    automation_dir: Path,
+) -> AgentAdapter:
+    return CopilotCliAdapter(config, automation_dir)
+
+
 def run(
     ctx: dict[str, Any],
     *,
@@ -565,6 +507,7 @@ def run(
     approve_human_gates: bool = False,
     no_scope_enforcement: bool = False,
     adapter: AgentAdapter | None = None,
+    adapter_factory: AdapterFactory = _default_adapter_factory,
     change_detector: ChangeDetector | None = None,
 ) -> int:
     """Execute the orchestrator loop.
@@ -580,8 +523,8 @@ def run(
             successful pre-analysis.
         no_scope_enforcement: If True, explicitly continue without Git-backed
             change detection or post-agent scope checks.
-        adapter: Agent adapter to use. If None, a real adapter would be
-            instantiated (not yet implemented in Phase 1).
+        adapter: Optional pre-built agent adapter.
+        adapter_factory: Factory used when no adapter is supplied.
         change_detector: Optional detector for post-agent file changes.
 
     Returns:
@@ -609,16 +552,15 @@ def run(
     git_config = getattr(config, "git", None)
     push_required = bool(getattr(git_config, "push_required", True))
 
-    default_adapter_created = adapter is None
     if adapter is None:
-        adapter = CopilotCliAdapter(config, automation_dir)
+        adapter = adapter_factory(config, automation_dir)
 
     initialize_change_detector = change_detector is None and not no_scope_enforcement
     if no_scope_enforcement:
         change_detector = None
 
     stop_reason: str | None = None
-    exit_code_override: int | None = None
+    exit_code = 0
 
     while True:
         selection = select_next_step(steps, progress.get(PROGRESS_FIELD_STEPS, {}))
@@ -631,9 +573,6 @@ def run(
         step = steps[selection.step_index]
         step_id = selection.step_id
         step_yaml = step.yaml_block
-        is_analysis_step = step_yaml.get(FIELD_TYPE) == STEP_TYPE_ANALYSIS
-
-        # Stop conditions.
         if selection.action == "stop_human_gate":
             if step_yaml.get(FIELD_PRE_ANALYSIS):
                 pa_result = run_pre_analysis(
@@ -653,6 +592,8 @@ def run(
                 )
                 if should_continue:
                     continue
+                if stop_reason != STOP_HUMAN_GATE:
+                    exit_code = 1
                 break
 
             if approve_human_gates:
@@ -671,27 +612,33 @@ def run(
 
         if selection.action == "stop_blocked":
             stop_reason = STOP_BLOCKED
+            exit_code = 1
             print(f"Stopped: {step_id} is blocked.")
             break
 
         if selection.action == "stop_failed":
             stop_reason = STOP_FAILED
+            exit_code = 1
             print(f"Stopped: {step_id} has failed.")
             break
 
-        # Protected-file pre-check.
         protected_result = check_protected_files(step, selection.step_index, steps, protected_paths=config.protected_paths)
         if not protected_result.ok:
-            stop_reason = "PROTECTED_FILE_VIOLATION"
-            progress[PROGRESS_FIELD_STEPS].setdefault(step_id, {}).update({
-                PROGRESS_FIELD_STATE: STATE_FAILED,
-                PROGRESS_FIELD_COMPLETED_AT: _now_iso(),
-                PROGRESS_FIELD_FAILURE_REASON: {
+            policy = STEP_OUTCOME_POLICY[StepOutcome.SCOPE_VIOLATION]
+            stop_reason = policy.stop_reason
+            exit_code = policy.exit_code
+            _finish_step(
+                progress,
+                progress_path,
+                log_path,
+                step_id,
+                policy.state,
+                failure_reason={
                     FR_CODE: FAILURE_SCOPE_VIOLATION,
                     FR_MESSAGE: f"Protected file violation: {[v.file_path for v in protected_result.violations]}",
                 },
-            })
-            save_progress(progress_path, progress)
+                stop_reason=policy.stop_reason,
+            )
             print(f"Protected file violation at {step_id}.", file=sys.stderr)
             break
 
@@ -700,6 +647,7 @@ def run(
                 change_detector = _create_default_change_detector(config)
             except ChangeDetectionUnavailableError as exc:
                 stop_reason = STOP_BLOCKED
+                exit_code = 1
                 _finish_step(
                     progress,
                     progress_path,
@@ -716,219 +664,34 @@ def run(
                 break
             initialize_change_detector = False
 
-        if is_analysis_step:
-            before_git_snapshot: str | None = None
-            clean_fallback = False
-            if not no_scope_enforcement:
-                if change_detector is not None:
-                    change_detector.snapshot_before()
-                else:
-                    before_git_snapshot = _analysis_git_snapshot(config)
-                    if before_git_snapshot is None:
-                        if not _is_worktree_clean(config):
-                            stop_reason = STOP_DIRTY_WORKTREE
-                            _finish_step(
-                                progress,
-                                progress_path,
-                                log_path,
-                                step_id,
-                                STATE_BLOCKED,
-                                failure_reason={
-                                    FR_CODE: FAILURE_DIRTY_WORKTREE,
-                                    FR_MESSAGE: "ANALYSIS requires a clean tree when no Git baseline is available.",
-                                },
-                                stop_reason=STOP_DIRTY_WORKTREE,
-                            )
-                            print(f"Blocked: {step_id} cannot establish an analysis baseline.", file=sys.stderr)
-                            break
-                        clean_fallback = True
-
-            step_prompt = compiled_prompts.get(step_id, "")
-            agent_name = step_yaml.get(FIELD_AGENT)
-            if agent_name is None and step_prompt.strip():
-                agent_name = AGENT_DEFAULT
-            if agent_name is not None:
-                agent_name = config.resolve_agent(agent_name)
-            model = config.resolve_model(step_yaml.get(FIELD_MODEL, MODEL_DEFAULT)) if agent_name else None
-
-            progress[PROGRESS_FIELD_STEPS].setdefault(step_id, {}).update({
-                PROGRESS_FIELD_STATE: STATE_IN_PROGRESS,
-                PROGRESS_FIELD_AGENT: agent_name,
-                PROGRESS_FIELD_MODEL: model,
-                PROGRESS_FIELD_STARTED_AT: _now_iso(),
-            })
-            save_progress(progress_path, progress)
-
-            pre_analysis_summary: dict[str, Any] | None = None
-            if step_yaml.get(FIELD_PRE_ANALYSIS):
-                pre_analysis_result = run_pre_analysis(
-                    step,
-                    automation_dir=automation_dir,
-                    working_dir=Path("."),
-                    timeout_seconds=config.pre_analysis_timeout_seconds,
-                )
-                pre_analysis_summary = _pre_analysis_summary(pre_analysis_result)
-                if not pre_analysis_result.ok:
-                    if pre_analysis_result.tree_modified:
-                        stop_reason = STOP_SCOPE_VIOLATION
-                        _finish_step(
-                            progress,
-                            progress_path,
-                            log_path,
-                            step_id,
-                            STATE_FAILED,
-                            failure_reason={
-                                FR_CODE: FAILURE_SCOPE_VIOLATION,
-                                FR_MESSAGE: pre_analysis_result.failure_reason or "ANALYSIS modified Git-visible source files.",
-                            },
-                            agent=agent_name,
-                            stop_reason=STOP_SCOPE_VIOLATION,
-                            extra_fields={PROGRESS_FIELD_PRE_ANALYSIS: pre_analysis_summary},
-                        )
-                        print(f"Analysis source change violation at {step_id}.", file=sys.stderr)
-                        break
-                    if _has_script_error(pre_analysis_result.command_results):
-                        stop_reason = STOP_BLOCKED
-                        _finish_step(
-                            progress,
-                            progress_path,
-                            log_path,
-                            step_id,
-                            STATE_BLOCKED,
-                            failure_reason={
-                                FR_CODE: FAILURE_PRE_ANALYSIS_FAILED,
-                                FR_MESSAGE: pre_analysis_result.failure_reason or "Analysis pre-analysis script error.",
-                            },
-                            agent=agent_name,
-                            stop_reason=STOP_BLOCKED,
-                            extra_fields={PROGRESS_FIELD_PRE_ANALYSIS: pre_analysis_summary},
-                        )
-                        print(f"Analysis pre-analysis script error blocked {step_id}.", file=sys.stderr)
-                        break
-
-                    stop_reason = STOP_PRE_ANALYSIS_FAILED
-                    _finish_step(
-                        progress,
-                        progress_path,
-                        log_path,
-                        step_id,
-                        STATE_FAILED,
-                        failure_reason={
-                            FR_CODE: FAILURE_PRE_ANALYSIS_FAILED,
-                            FR_MESSAGE: pre_analysis_result.failure_reason or "Analysis pre-analysis failed.",
-                        },
-                        agent=agent_name,
-                        stop_reason=STOP_PRE_ANALYSIS_FAILED,
-                        extra_fields={PROGRESS_FIELD_PRE_ANALYSIS: pre_analysis_summary},
-                    )
-                    print(f"Analysis pre-analysis failed for {step_id}.", file=sys.stderr)
-                    break
-
-            if agent_name:
-                request = AgentInvocationRequest(
-                    step_id=step_id,
-                    agent_name=agent_name,
-                    model=model or config.default_model,
-                    system_prompt_path=_system_prompt_path_for_type(STEP_TYPE_ANALYSIS, automation_dir),
-                    step_prompt=step_prompt,
-                    plan_context=plan_context,
-                    allowed_files=[],
-                    verification_commands=[],
-                    title=step.heading_title,
-                )
-
-                invocation_result = invoke_agent(adapter, request)
-                if not invocation_result.ok:
-                    if invocation_result.blocked:
-                        stop_reason = STOP_AGENT_BLOCKED
-                        _finish_step(
-                            progress,
-                            progress_path,
-                            log_path,
-                            step_id,
-                            STATE_BLOCKED,
-                            failure_reason={
-                                FR_CODE: FAILURE_AGENT_BLOCKED,
-                                FR_MESSAGE: invocation_result.agent_result.stop_condition_hit
-                                if invocation_result.agent_result else "Analysis agent blocked.",
-                            },
-                            agent=agent_name,
-                            stop_reason=STOP_AGENT_BLOCKED,
-                        )
-                    else:
-                        stop_reason = STOP_FAILED
-                        _finish_step(
-                            progress,
-                            progress_path,
-                            log_path,
-                            step_id,
-                            STATE_FAILED,
-                            failure_reason={
-                                FR_CODE: FAILURE_INVALID_AGENT_RESULT,
-                                FR_MESSAGE: invocation_result.failure_reason or "Analysis agent failed.",
-                            },
-                            agent=agent_name,
-                            stop_reason=STOP_FAILED,
-                        )
-                    print(f"Analysis agent {'blocked' if invocation_result.blocked else 'failed'} at {step_id}.", file=sys.stderr)
-                    break
-
-            if not no_scope_enforcement and _analysis_changed(
-                change_detector=change_detector,
-                before_git_snapshot=before_git_snapshot,
-                clean_fallback=clean_fallback,
-                config=config,
-            ):
-                stop_reason = STOP_SCOPE_VIOLATION
-                _finish_step(
-                    progress,
-                    progress_path,
-                    log_path,
-                    step_id,
-                    STATE_FAILED,
-                    failure_reason={
-                        FR_CODE: FAILURE_SCOPE_VIOLATION,
-                        FR_MESSAGE: "ANALYSIS modified Git-visible source files.",
-                    },
-                    agent=agent_name,
-                    stop_reason=STOP_SCOPE_VIOLATION,
-                    extra_fields={PROGRESS_FIELD_PRE_ANALYSIS: pre_analysis_summary} if pre_analysis_summary else None,
-                )
-                print(f"Analysis source change violation at {step_id}.", file=sys.stderr)
-                break
-
+        if step_yaml.get(FIELD_TYPE) != STEP_TYPE_ANALYSIS and not _is_worktree_clean(config):
+            policy = STEP_OUTCOME_POLICY[StepOutcome.DIRTY_WORKTREE]
+            stop_reason = policy.stop_reason
+            exit_code = policy.exit_code
             _finish_step(
-                progress,
-                progress_path,
-                log_path,
-                step_id,
-                STATE_DONE,
-                agent=agent_name,
-                extra_fields={PROGRESS_FIELD_PRE_ANALYSIS: pre_analysis_summary} if pre_analysis_summary else None,
-            )
-            print(f"Completed: {step_id} — {step.heading_title}")
-
-            if one_step:
-                stop_reason = STOP_ONE_STEP
-                break
-            continue
-
-        if not _is_worktree_clean(config):
-            stop_reason = STOP_DIRTY_WORKTREE
-            _finish_step(
-                progress, progress_path, log_path, step_id, STATE_BLOCKED,
+                progress, progress_path, log_path, step_id, policy.state,
                 failure_reason={
                     FR_CODE: FAILURE_DIRTY_WORKTREE,
                     FR_MESSAGE: "Git working tree must be clean before running an implementation step.",
                 },
-                stop_reason=STOP_DIRTY_WORKTREE,
+                stop_reason=policy.stop_reason,
             )
             print(f"Blocked: {step_id} requires a clean working tree.", file=sys.stderr)
             break
 
-        # === Execute the step ===
-        agent_name = config.resolve_agent(step_yaml.get(FIELD_AGENT, AGENT_DEFAULT))
-        model = config.resolve_model(step_yaml.get(FIELD_MODEL, MODEL_DEFAULT))
+        step_prompt = compiled_prompts.get(step_id, "")
+        agent_name = step_yaml.get(FIELD_AGENT)
+        if step_yaml.get(FIELD_TYPE) != STEP_TYPE_ANALYSIS:
+            agent_name = config.resolve_agent(agent_name or AGENT_DEFAULT)
+        elif agent_name is None and step_prompt.strip():
+            agent_name = config.resolve_agent(AGENT_DEFAULT)
+        elif agent_name is not None:
+            agent_name = config.resolve_agent(agent_name)
+        model = (
+            config.resolve_model(step_yaml.get(FIELD_MODEL, MODEL_DEFAULT))
+            if agent_name
+            else None
+        )
 
         progress[PROGRESS_FIELD_STEPS].setdefault(step_id, {}).update({
             PROGRESS_FIELD_STATE: STATE_IN_PROGRESS,
@@ -938,242 +701,43 @@ def run(
         })
         save_progress(progress_path, progress)
 
-        # 6. Pre-analysis.
-        if step_yaml.get(FIELD_PRE_ANALYSIS):
-            pre_analysis_result = run_pre_analysis(
-                step,
-                automation_dir=automation_dir,
-                working_dir=Path("."),
-                timeout_seconds=config.pre_analysis_timeout_seconds,
-            )
-            if not pre_analysis_result.ok:
-                if _has_script_error(pre_analysis_result.command_results):
-                    stop_reason = STOP_BLOCKED
-                    _finish_step(
-                        progress, progress_path, log_path, step_id, STATE_BLOCKED,
-                        failure_reason={
-                            FR_CODE: FAILURE_PRE_ANALYSIS_FAILED,
-                            FR_MESSAGE: pre_analysis_result.failure_reason or "Pre-analysis script error.",
-                        },
-                        agent=agent_name,
-                        stop_reason=STOP_BLOCKED,
-                    )
-                    print(f"Pre-analysis script error blocked {step_id}.", file=sys.stderr)
-                    break
-
-                stop_reason = STOP_PRE_ANALYSIS_FAILED
-                _finish_step(
-                    progress, progress_path, log_path, step_id, STATE_FAILED,
-                    failure_reason={
-                        FR_CODE: FAILURE_DIRTY_WORKTREE if pre_analysis_result.tree_modified else FAILURE_VERIFICATION_FAILED,
-                        FR_MESSAGE: pre_analysis_result.failure_reason or "Pre-analysis detected tree modification.",
-                    },
-                    agent=agent_name,
-                    stop_reason=STOP_PRE_ANALYSIS_FAILED,
-                )
-                print(f"Pre-analysis failed for {step_id}.", file=sys.stderr)
-                break
-
-        if change_detector is not None:
-            change_detector.snapshot_before()
-
-        # 7. Invoke agent.
-        request = AgentInvocationRequest(
-            step_id=step_id,
-            agent_name=agent_name,
-            model=model,
-            system_prompt_path=_system_prompt_path_for_type(step_yaml.get(FIELD_TYPE), automation_dir),
-            step_prompt=compiled_prompts.get(step_id, ""),
-            plan_context=plan_context,
-            allowed_files=step_yaml.get(FIELD_ALLOWED_FILES, []),
-            verification_commands=step_yaml.get(FIELD_VERIFICATION, {}).get(FIELD_COMMANDS, []),
-            title=step.heading_title,
-        )
-
-        try:
-            invocation_result = invoke_agent(adapter, request)
-        except FileNotFoundError as exc:
-            if not default_adapter_created:
-                raise
-            stop_reason = STOP_AGENT_BLOCKED
-            _finish_step(
-                progress, progress_path, log_path, step_id, STATE_BLOCKED,
-                failure_reason={
-                    FR_CODE: FAILURE_AGENT_BLOCKED,
-                    FR_MESSAGE: f"Copilot CLI command not found: {exc.filename}",
-                },
-                agent=agent_name,
-                stop_reason=STOP_AGENT_BLOCKED,
-            )
-            print(f"Copilot CLI command not found: {exc.filename}", file=sys.stderr)
-            exit_code_override = 2
-            break
-
-        if not invocation_result.ok:
-            if invocation_result.blocked:
-                stop_reason = STOP_AGENT_BLOCKED
-                _finish_step(
-                    progress, progress_path, log_path, step_id, STATE_BLOCKED,
-                    failure_reason={
-                        FR_CODE: FAILURE_AGENT_BLOCKED,
-                        FR_MESSAGE: invocation_result.agent_result.stop_condition_hit
-                        if invocation_result.agent_result else "Agent blocked.",
-                    },
-                    agent=agent_name,
-                    stop_reason=STOP_AGENT_BLOCKED,
-                )
-            elif invocation_result.failed:
-                stop_reason = STOP_FAILED
-                _finish_step(
-                    progress, progress_path, log_path, step_id, STATE_FAILED,
-                    failure_reason={
-                        FR_CODE: FAILURE_INVALID_AGENT_RESULT,
-                        FR_MESSAGE: invocation_result.failure_reason or "Agent returned FAILED.",
-                    },
-                    agent=agent_name,
-                    stop_reason=STOP_FAILED,
-                )
-            else:
-                stop_reason = STOP_INVALID_AGENT_RESULT
-                _finish_step(
-                    progress, progress_path, log_path, step_id, STATE_FAILED,
-                    failure_reason={
-                        FR_CODE: FAILURE_INVALID_AGENT_RESULT,
-                        FR_MESSAGE: invocation_result.failure_reason or "Invalid agent result.",
-                    },
-                    agent=agent_name,
-                    stop_reason=STOP_INVALID_AGENT_RESULT,
-                )
-            print(f"Agent {'blocked' if invocation_result.blocked else 'failed'} at {step_id}.", file=sys.stderr)
-            if (
-                default_adapter_created
-                and invocation_result.blocked
-                and invocation_result.agent_result is not None
-                and invocation_result.agent_result.stop_condition_hit is not None
-                and invocation_result.agent_result.stop_condition_hit.startswith("copilot_exit_code_")
-            ):
-                exit_code_override = 2
-            break
-
-        if change_detector is not None:
-            changed_files = change_detector.detect_changes()
-            scope_violations = check_allowed_files(step_yaml.get(FIELD_ALLOWED_FILES, []), changed_files)
-            if scope_violations:
-                stop_reason = STOP_SCOPE_VIOLATION
-                _finish_step(
-                    progress, progress_path, log_path, step_id, STATE_FAILED,
-                    failure_reason={
-                        FR_CODE: FAILURE_SCOPE_VIOLATION,
-                        FR_MESSAGE: f"Scope violation: {[v.file_path for v in scope_violations]}",
-                    },
-                    agent=agent_name,
-                    stop_reason=STOP_SCOPE_VIOLATION,
-                )
-                print(f"Scope violation at {step_id}.", file=sys.stderr)
-                break
-
-        # 8. Verification.
-        verification_result = run_verification(step, automation_dir=automation_dir, attempt=1)
-        verification_attempts = [verification_result]
-
-        # 9. Retry loop on verification failure.
-        fix_attempts = 0
-        verification_has_script_error = _has_script_error(verification_result.command_results)
-        if not verification_result.ok and not verification_has_script_error:
-            failure_summary = {
-                "commands": [
-                    {
-                        "command": cr.command,
-                        "exit_code": cr.exit_code,
-                        "status": cr.status,
-                        "stdout_tail": cr.stdout_tail,
-                        "stderr_tail": cr.stderr_tail,
-                    }
-                    for cr in verification_result.command_results
-                ],
-            }
-            retry_ctrl = RetryController(
+        result = execute_step(
+            StepExecutionContext(
                 step=step,
                 adapter=adapter,
                 automation_dir=automation_dir,
-                failure_summary=failure_summary,
-                change_detector=change_detector,
-                step_prompt=compiled_prompts.get(step_id, ""),
-                system_prompt_path=_system_prompt_path_for_type(step_yaml.get(FIELD_TYPE), automation_dir),
+                config=config,
+                step_prompt=step_prompt,
                 plan_context=plan_context,
+                change_detector=change_detector,
+                no_scope_enforcement=no_scope_enforcement,
+                push_required=push_required,
+                is_worktree_clean=_is_worktree_clean,
+                git_commit=_git_commit,
+                pre_analysis_runner=run_pre_analysis,
+                verification_runner=run_verification,
             )
-            while (
-                not verification_result.ok
-                and not verification_has_script_error
-                and retry_ctrl.should_retry()
-            ):
-                fix_result = retry_ctrl.attempt_fix()
-                fix_attempts += 1
-
-                if fix_result.scope_violation or fix_result.blocked or fix_result.agent_result.status == AGENT_STATUS_FAILED:
-                    break
-
-                verification_result = run_verification(
-                    step,
-                    automation_dir=automation_dir,
-                    attempt=fix_attempts + 1,
-                )
-                verification_attempts.append(verification_result)
-                verification_has_script_error = _has_script_error(verification_result.command_results)
-
-        if not verification_result.ok:
-            if verification_has_script_error:
-                stop_reason = STOP_BLOCKED
-                _finish_step(
-                    progress, progress_path, log_path, step_id, STATE_BLOCKED,
-                    failure_reason={
-                        FR_CODE: FAILURE_VERIFICATION_FAILED,
-                        FR_MESSAGE: "Verification script error.",
-                    },
-                    agent=agent_name,
-                    verification_status=VERIFY_FAIL,
-                    stop_reason=STOP_BLOCKED,
-                    extra_fields={
-                        PROGRESS_FIELD_FIX_ATTEMPTS: fix_attempts,
-                        PROGRESS_FIELD_VERIFICATION: _verification_summary(VERIFY_FAIL, verification_attempts),
-                    },
-                )
-                print(f"Verification script error blocked {step_id}.", file=sys.stderr)
-            else:
-                stop_reason = STOP_VERIFICATION_FAILED
-                _finish_step(
-                    progress, progress_path, log_path, step_id, STATE_FAILED,
-                    failure_reason={
-                        FR_CODE: FAILURE_VERIFICATION_FAILED,
-                        FR_MESSAGE: "Verification failed after all retry attempts.",
-                    },
-                    agent=agent_name,
-                    verification_status=VERIFY_FAIL,
-                    stop_reason=STOP_VERIFICATION_FAILED,
-                    extra_fields={
-                        PROGRESS_FIELD_FIX_ATTEMPTS: fix_attempts,
-                        PROGRESS_FIELD_VERIFICATION: _verification_summary(VERIFY_FAIL, verification_attempts),
-                    },
-                )
-                print(f"Verification failed for {step_id}.", file=sys.stderr)
+        )
+        policy = STEP_OUTCOME_POLICY[result.outcome] if result.outcome else None
+        _finish_step(
+            progress,
+            progress_path,
+            log_path,
+            step_id,
+            policy.state if policy else STATE_DONE,
+            failure_reason=result.failure_reason,
+            agent=result.agent,
+            verification_status=result.verification_status,
+            stop_reason=policy.stop_reason if policy else None,
+            extra_fields=result.extra_fields,
+        )
+        if result.message:
+            print(result.message, file=sys.stderr if result.message_is_error else sys.stdout)
+        if policy:
+            stop_reason = policy.stop_reason
+            exit_code = policy.exit_code
             break
 
-        # 10. Step succeeded — commit the step's work.
-        commit_sha = _git_commit(step_id, step.heading_title, push=push_required, config=config)
-
-        _finish_step(
-            progress, progress_path, log_path, step_id, STATE_DONE,
-            agent=agent_name,
-            verification_status=VERIFY_PASS,
-            extra_fields={
-                PROGRESS_FIELD_FIX_ATTEMPTS: fix_attempts,
-                PROGRESS_FIELD_VERIFICATION: _verification_summary(VERIFY_PASS, verification_attempts),
-                PROGRESS_FIELD_COMMIT: commit_sha,
-            },
-        )
-        print(f"Completed: {step_id} — {step.heading_title}")
-
-        # One-step mode: stop after first successful step.
         if one_step:
             stop_reason = STOP_ONE_STEP
             break
@@ -1181,6 +745,4 @@ def run(
     generate_whole_plan_report(report_path, progress, stop_reason=stop_reason)
     print(f"Whole-plan report written to {report_path}")
 
-    if exit_code_override is not None:
-        return exit_code_override
-    return 0 if stop_reason in (STOP_ALL_COMPLETE, STOP_ONE_STEP, STOP_HUMAN_GATE, None) else 1
+    return exit_code

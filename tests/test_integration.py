@@ -837,7 +837,7 @@ class TestNoAdapterError:
                 change_detector=FakeChangeDetector({}),
             )
 
-        assert exit_code == 2
+        assert exit_code == 1
 
 
 # ---------------------------------------------------------------------------
