@@ -79,6 +79,12 @@ def build_parser() -> argparse.ArgumentParser:
                             help="Reset current step to TODO.")
     run_parser.add_argument("--approve-human-gates", action="store_true", default=False,
                             help="Auto-approve HUMAN_GATE steps after successful pre-analysis.")
+    run_parser.add_argument(
+        "--no-scope-enforcement",
+        action="store_true",
+        default=False,
+        help="Continue without Git-backed change detection and scope enforcement.",
+    )
 
     # --- validate ---
     validate_parser = subparsers.add_parser("validate", help="Validate an implementation plan.")
@@ -159,11 +165,13 @@ def _handle_run(args: argparse.Namespace) -> int:
         print(f"Error: {ctx['error']}", file=sys.stderr)
         return 1
 
-    return run(
-        ctx,
-        one_step=args.next_step_only,
-        approve_human_gates=args.approve_human_gates,
-    )
+    run_kwargs = {
+        "one_step": args.next_step_only,
+        "approve_human_gates": args.approve_human_gates,
+    }
+    if args.no_scope_enforcement:
+        run_kwargs["no_scope_enforcement"] = True
+    return run(ctx, **run_kwargs)
 
 
 def _handle_validate(args: argparse.Namespace) -> int:

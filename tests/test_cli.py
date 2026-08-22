@@ -114,6 +114,42 @@ class TestValidationErrors:
         assert run(ctx) == 2
 
 
+class TestNoScopeEnforcementFlag:
+    def test_parser_accepts_flag(self) -> None:
+        from tools.wfrunner import build_parser
+
+        args = build_parser().parse_args(
+            ["run", "docs/plan.md", "--no-scope-enforcement"]
+        )
+
+        assert args.no_scope_enforcement is True
+
+    def test_run_handler_forwards_enabled_flag(self, tmp_path: Path) -> None:
+        from tools.wfrunner import main
+
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text("", encoding="utf-8")
+        config = make_default_config(automation_dir=str(tmp_path / ".automation"))
+        ctx = {"error": None}
+
+        with (
+            mock.patch("tools.wfrunner._load_run_config", return_value=config),
+            mock.patch("tools.run_plan.prepare_run", return_value=ctx),
+            mock.patch("tools.run_plan.run", return_value=0) as run_mock,
+        ):
+            exit_code = main(
+                ["run", str(plan_file), "--no-scope-enforcement"]
+            )
+
+        assert exit_code == 0
+        run_mock.assert_called_once_with(
+            ctx,
+            one_step=False,
+            approve_human_gates=False,
+            no_scope_enforcement=True,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Dirty-start blocking
 # ---------------------------------------------------------------------------

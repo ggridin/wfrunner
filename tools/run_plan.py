@@ -19,7 +19,8 @@ from tools.constants import (
     AGENT_DEFAULT,
     MODEL_DEFAULT,
     FR_CODE, FR_MESSAGE,
-    FAILURE_AGENT_BLOCKED, FAILURE_DIRTY_WORKTREE, FAILURE_HUMAN_GATE,
+    FAILURE_AGENT_BLOCKED, FAILURE_CHANGE_DETECTION_UNAVAILABLE,
+    FAILURE_DIRTY_WORKTREE, FAILURE_HUMAN_GATE,
     FAILURE_INVALID_AGENT_RESULT, FAILURE_PRE_ANALYSIS_FAILED,
     FAILURE_SCOPE_VIOLATION, FAILURE_VERIFICATION_FAILED,
     PROGRESS_FIELD_AGENT, PROGRESS_FIELD_COMMIT, PROGRESS_FIELD_COMPLETED_AT,
@@ -65,18 +66,27 @@ def _generate_run_id() -> str:
     return datetime.now(timezone.utc).strftime("RUN-%Y-%m-%dT%H:%M:%SZ")
 
 
-def _create_default_change_detector(config: WaterfallRunnerConfig | None = None) -> ChangeDetector | None:
-    """Create the default Git-backed change detector when it can be used safely."""
+class ChangeDetectionUnavailableError(RuntimeError):
+    """Raised when Git cannot provide the change data required for scope enforcement."""
+
+
+def _create_default_change_detector(config: WaterfallRunnerConfig | None = None) -> ChangeDetector:
+    """Create and validate the default Git-backed change detector."""
     try:
         detector = _ConfiguredGitChangeDetector(Path("."), _git_timeout(config))
         detector.detect_changes()
-    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        print("Warning: Git change detection is unavailable; scope enforcement is disabled.", file=sys.stderr)
-        return None
-
-    if not _is_worktree_clean(config):
-        print("Warning: Git worktree is not clean; scope enforcement is disabled.", file=sys.stderr)
-        return None
+    except FileNotFoundError as exc:
+        raise ChangeDetectionUnavailableError(
+            "Git executable was not found; scope enforcement cannot detect file changes."
+        ) from exc
+    except subprocess.CalledProcessError as exc:
+        raise ChangeDetectionUnavailableError(
+            f"Git change detection failed with exit code {exc.returncode}."
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ChangeDetectionUnavailableError(
+            f"Git change detection timed out after {exc.timeout} seconds."
+        ) from exc
 
     return detector
 
@@ -565,6 +575,7 @@ def run(
     *,
     one_step: bool = False,
     approve_human_gates: bool = False,
+    no_scope_enforcement: bool = False,
     adapter: AgentAdapter | None = None,
     change_detector: ChangeDetector | None = None,
 ) -> int:
@@ -579,6 +590,8 @@ def run(
         one_step: If True, stop after the first successful implementation step.
         approve_human_gates: If True, auto-approve HUMAN_GATE steps after
             successful pre-analysis.
+        no_scope_enforcement: If True, explicitly continue without Git-backed
+            change detection or post-agent scope checks.
         adapter: Agent adapter to use. If None, a real adapter would be
             instantiated (not yet implemented in Phase 1).
         change_detector: Optional detector for post-agent file changes.
@@ -612,8 +625,9 @@ def run(
     if adapter is None:
         adapter = CopilotCliAdapter(config, automation_dir)
 
-    if change_detector is None:
-        change_detector = _create_default_change_detector(config)
+    initialize_change_detector = change_detector is None and not no_scope_enforcement
+    if no_scope_enforcement:
+        change_detector = None
 
     stop_reason: str | None = None
     exit_code_override: int | None = None
@@ -693,31 +707,53 @@ def run(
             print(f"Protected file violation at {step_id}.", file=sys.stderr)
             break
 
+        if initialize_change_detector:
+            try:
+                change_detector = _create_default_change_detector(config)
+            except ChangeDetectionUnavailableError as exc:
+                stop_reason = STOP_BLOCKED
+                _finish_step(
+                    progress,
+                    progress_path,
+                    log_path,
+                    step_id,
+                    STATE_BLOCKED,
+                    failure_reason={
+                        FR_CODE: FAILURE_CHANGE_DETECTION_UNAVAILABLE,
+                        FR_MESSAGE: str(exc),
+                    },
+                    stop_reason=STOP_BLOCKED,
+                )
+                print(f"Blocked: {step_id}: {exc}", file=sys.stderr)
+                break
+            initialize_change_detector = False
+
         if is_analysis_step:
             before_git_snapshot: str | None = None
             clean_fallback = False
-            if change_detector is not None:
-                change_detector.snapshot_before()
-            else:
-                before_git_snapshot = _analysis_git_snapshot(config)
-                if before_git_snapshot is None:
-                    if not _is_worktree_clean(config):
-                        stop_reason = STOP_DIRTY_WORKTREE
-                        _finish_step(
-                            progress,
-                            progress_path,
-                            log_path,
-                            step_id,
-                            STATE_BLOCKED,
-                            failure_reason={
-                                FR_CODE: FAILURE_DIRTY_WORKTREE,
-                                FR_MESSAGE: "ANALYSIS requires a clean tree when no Git baseline is available.",
-                            },
-                            stop_reason=STOP_DIRTY_WORKTREE,
-                        )
-                        print(f"Blocked: {step_id} cannot establish an analysis baseline.", file=sys.stderr)
-                        break
-                    clean_fallback = True
+            if not no_scope_enforcement:
+                if change_detector is not None:
+                    change_detector.snapshot_before()
+                else:
+                    before_git_snapshot = _analysis_git_snapshot(config)
+                    if before_git_snapshot is None:
+                        if not _is_worktree_clean(config):
+                            stop_reason = STOP_DIRTY_WORKTREE
+                            _finish_step(
+                                progress,
+                                progress_path,
+                                log_path,
+                                step_id,
+                                STATE_BLOCKED,
+                                failure_reason={
+                                    FR_CODE: FAILURE_DIRTY_WORKTREE,
+                                    FR_MESSAGE: "ANALYSIS requires a clean tree when no Git baseline is available.",
+                                },
+                                stop_reason=STOP_DIRTY_WORKTREE,
+                            )
+                            print(f"Blocked: {step_id} cannot establish an analysis baseline.", file=sys.stderr)
+                            break
+                        clean_fallback = True
 
             step_prompt = compiled_prompts.get(step_id, "")
             agent_name = step_yaml.get(FIELD_AGENT)
@@ -849,7 +885,7 @@ def run(
                     print(f"Analysis agent {'blocked' if invocation_result.blocked else 'failed'} at {step_id}.", file=sys.stderr)
                     break
 
-            if _analysis_changed(
+            if not no_scope_enforcement and _analysis_changed(
                 change_detector=change_detector,
                 before_git_snapshot=before_git_snapshot,
                 clean_fallback=clean_fallback,
