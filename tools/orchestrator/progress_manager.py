@@ -34,10 +34,6 @@ class ProgressValidationError(Exception):
         super().__init__(f"Invalid progress file {path}: {details}")
 
 
-class ProgressPlanMismatchError(Exception):
-    """Raised when progress does not match the compiled plan checksum."""
-
-
 def _schema_path() -> Path:
     return get_project_root() / "schemas" / "progress.schema.json"
 
@@ -77,30 +73,6 @@ def init_step_progress() -> dict[str, Any]:
         PROGRESS_FIELD_COMMIT: None,
         PROGRESS_FIELD_FAILURE_REASON: None,
     }
-
-
-def init_compiled_progress(compiled_plan: dict[str, Any]) -> dict[str, Any]:
-    """Create progress metadata keyed to a compiled plan checksum."""
-    return {
-        "schema_version": 1,
-        "source_file": compiled_plan["source_file"],
-        "source_sha256": compiled_plan["source_sha256"],
-        "steps": {},
-    }
-
-
-def validate_progress_matches_compiled_plan(
-    progress: dict[str, Any],
-    compiled_plan: dict[str, Any],
-) -> None:
-    """Ensure progress and compiled plan refer to the same source checksum."""
-    if (
-        progress.get("source_file") != compiled_plan.get("source_file")
-        or progress.get("source_sha256") != compiled_plan.get("source_sha256")
-    ):
-        raise ProgressPlanMismatchError(
-            "Progress does not match the compiled plan; reset or recompile before resuming."
-        )
 
 
 def load_progress(path: Path, validate: bool = True) -> dict[str, Any]:

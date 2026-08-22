@@ -102,34 +102,6 @@ class TestCompiledPlanDriftGuard:
         assert compiled["source_sha256"] == _sha256(plan_path)
 
 
-class TestCompiledProgressAgreement:
-    """Progress should be keyed to the compiled/source checksum agreement."""
-
-    def test_progress_records_compiled_source_checksum(self, tmp_path: Path) -> None:
-        from tools.orchestrator.progress_manager import init_compiled_progress
-        from tools.plan_compiler import compile_plan
-
-        plan_path = tmp_path / "plan.md"
-        automation_dir = tmp_path / ".wfrunner" / "automation"
-        _write_plan(plan_path)
-        compiled_path = compile_plan(plan_path, automation_dir=automation_dir)
-        compiled = json.loads(compiled_path.read_text(encoding="utf-8"))
-
-        progress = init_compiled_progress(compiled)
-
-        assert progress["source_file"] == compiled["source_file"]
-        assert progress["source_sha256"] == compiled["source_sha256"]
-
-    def test_progress_mismatch_requires_reset_or_recompile(self) -> None:
-        from tools.orchestrator.progress_manager import ProgressPlanMismatchError, validate_progress_matches_compiled_plan
-
-        compiled = {"source_file": "docs/implementation_9.md", "source_sha256": "new"}
-        progress = {"source_file": "docs/implementation_9.md", "source_sha256": "old"}
-
-        with pytest.raises(ProgressPlanMismatchError, match="reset|recompile"):
-            validate_progress_matches_compiled_plan(progress, compiled)
-
-
 # ---------------------------------------------------------------------------
 # Phase 9b — compiled step prompt, review_guidance, and plan-context artifact
 # ---------------------------------------------------------------------------
