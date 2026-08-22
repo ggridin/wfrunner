@@ -193,7 +193,10 @@ verification:
 ```
 
 Choose commands that can falsify the step's work and keep them realistic for
-the files in scope.
+the files in scope. The orchestrator passes each command verbatim to the current
+platform's default shell; it does not normalize quoting or other shell syntax.
+Write `verification.commands` to be portable across every target platform, or
+use a platform-specific plan when portability is not possible.
 
 ## `allowed_files`
 
@@ -216,4 +219,3 @@ implementation.
 Treat the implementation plan as immutable while a run is executing. Runtime
 state belongs under `.automation/`; plan changes belong in separate, explicit
 planning steps.
-

@@ -394,25 +394,8 @@ def _system_prompt_path_for_type(step_type: str | None, automation_dir: Path) ->
     return str(candidates[0].resolve())
 
 
-def _windows_shell_safe_command(command: str) -> str:
-    """Convert POSIX-style quoted shell arguments for Windows cmd.exe."""
-    if sys.platform != "win32":
-        return command
-
-    chars: list[str] = []
-    in_double_quotes = False
-    for char in command:
-        if char == '"':
-            in_double_quotes = not in_double_quotes
-        if char == "'" and not in_double_quotes:
-            chars.append('"')
-        else:
-            chars.append(char)
-    return "".join(chars)
-
-
 def _verification_step_for_current_shell(step: ParsedStep) -> ParsedStep:
-    """Return a verification-safe step without mutating parsed plan metadata."""
+    """Return a legacy normalized step without mutating parsed plan metadata."""
     verification = step.yaml_block.get(FIELD_VERIFICATION)
     if not isinstance(verification, dict):
         return step
@@ -421,10 +404,22 @@ def _verification_step_for_current_shell(step: ParsedStep) -> ParsedStep:
     if not isinstance(commands, list):
         return step
 
-    normalized_commands = [
-        _windows_shell_safe_command(command) if isinstance(command, str) else command
-        for command in commands
-    ]
+    if sys.platform != "win32":
+        return step
+
+    normalized_commands = []
+    for command in commands:
+        if not isinstance(command, str):
+            normalized_commands.append(command)
+            continue
+
+        chars: list[str] = []
+        in_double_quotes = False
+        for char in command:
+            if char == '"':
+                in_double_quotes = not in_double_quotes
+            chars.append('"' if char == "'" and not in_double_quotes else char)
+        normalized_commands.append("".join(chars))
     if normalized_commands == commands:
         return step
 
@@ -1085,8 +1080,7 @@ def run(
                 break
 
         # 8. Verification.
-        verification_step = _verification_step_for_current_shell(step)
-        verification_result = run_verification(verification_step, automation_dir=automation_dir, attempt=1)
+        verification_result = run_verification(step, automation_dir=automation_dir, attempt=1)
         verification_attempts = [verification_result]
 
         # 9. Retry loop on verification failure.
@@ -1127,7 +1121,7 @@ def run(
                     break
 
                 verification_result = run_verification(
-                    verification_step,
+                    step,
                     automation_dir=automation_dir,
                     attempt=fix_attempts + 1,
                 )

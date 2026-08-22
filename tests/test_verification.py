@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import textwrap
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from tests.helpers import (
     make_implementation_step,
@@ -64,6 +65,30 @@ def _step_with_empty_verification(
           max_fix_attempts: 0
         ```
     """)
+
+
+def test_verification_command_is_executed_verbatim(tmp_path: Path) -> None:
+    from tools.orchestrator.verification import run_verification
+
+    command = 'python -c "print(\'single\', \\"escaped double\\")"'
+    plan = make_plan(_step_with_verification(commands=["echo placeholder"]))
+    step = _parse_steps(plan)[0]
+    step.yaml_block["verification"]["commands"] = [command]
+    automation_dir = tmp_path / ".automation"
+    automation_dir.mkdir()
+    process = MagicMock()
+    process.communicate.return_value = ("", "")
+    process.returncode = 0
+
+    with patch(
+        "tools.orchestrator.verification.subprocess.Popen",
+        return_value=process,
+    ) as popen:
+        result = run_verification(step, automation_dir=automation_dir, attempt=1)
+
+    assert result.ok is True
+    assert result.command_results[0].command == command
+    assert popen.call_args.args[0] == command
 
 
 # ===========================================================================
