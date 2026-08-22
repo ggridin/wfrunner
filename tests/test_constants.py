@@ -35,10 +35,10 @@ class TestAnalysisStepConstants:
 
         assert c.STEP_TYPE_ANALYSIS == "ANALYSIS"
 
-    def test_artifact_files_field_constant_exists(self) -> None:
+    def test_unused_artifact_files_field_constant_is_removed(self) -> None:
         import tools.constants as c
 
-        assert c.FIELD_ARTIFACT_FILES == "artifact_files"
+        assert not hasattr(c, "FIELD_ARTIFACT_FILES")
 
 
 class TestCompiledPlanFieldConstants:

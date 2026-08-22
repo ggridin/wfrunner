@@ -55,7 +55,6 @@ class RetryController:
         step_prompt: str = "",
         system_prompt_path: str = "",
         plan_context: str = "",
-        plan_path: str | None = None,
         change_detector: ChangeDetector | None = None,
         config: WaterfallRunnerConfig | None = None,
     ) -> None:
@@ -78,11 +77,6 @@ class RetryController:
         if self._blocked:
             return False
         return self._attempts_used < self._max_fix_attempts
-
-    def attempts_remaining(self) -> int:
-        """Return the number of fix attempts remaining."""
-        remaining = self._max_fix_attempts - self._attempts_used
-        return max(0, remaining)
 
     def attempt_fix(self) -> FixResult:
         """Invoke the fixer agent for one fix attempt.

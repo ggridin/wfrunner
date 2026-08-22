@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
-from tools.data_path import get_project_root
 from tools.constants import (
     AGENT_STATUS_FAILED,
     FIELD_AGENT, FIELD_ALLOWED_FILES, FIELD_COMMANDS, FIELD_ID, FIELD_MODEL,
@@ -37,8 +36,7 @@ from tools.constants import (
     STEP_TYPE_ANALYSIS,
     VERIFY_FAIL, VERIFY_PASS,
 )
-from tools.plan_parser import ParsedStep, parse_plan_file
-from tools.plan_validator import validate_plan
+from tools.plan_parser import ParsedStep
 from tools.config import WaterfallRunnerConfig
 from tools.orchestrator.agent_adapter import AgentAdapter, AgentInvocationRequest
 from tools.orchestrator.agent_invocation import invoke_agent
@@ -372,11 +370,6 @@ def _check_resume_consistency(
     return None
 
 
-def _automation_dir_from_config(config_automation_dir: str) -> Path:
-    """Return the configured automation directory."""
-    return Path(config_automation_dir)
-
-
 _SYSTEM_PROMPT_IMPLEMENTATION = "system_prompt.implementation.md"
 _SYSTEM_PROMPT_ANALYSIS = "system_prompt.analysis.md"
 
@@ -459,7 +452,7 @@ def prepare_run(
 
     _warn_if_protected_paths_disabled(config)
 
-    automation_dir = _automation_dir_from_config(config.automation_dir)
+    automation_dir = Path(config.automation_dir)
     automation_dir.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -519,7 +512,7 @@ def reset_run(config: Any) -> int:
     Returns:
         0 on success, 1 on error.
     """
-    automation_dir = _automation_dir_from_config(config.automation_dir)
+    automation_dir = Path(config.automation_dir)
     progress_path = automation_dir / "progress.json"
 
     if not progress_path.exists():
@@ -543,7 +536,7 @@ def reset_current_step(config: Any) -> int:
     Returns:
         0 on success, 1 on error.
     """
-    automation_dir = _automation_dir_from_config(config.automation_dir)
+    automation_dir = Path(config.automation_dir)
     progress_path = automation_dir / "progress.json"
 
     if not progress_path.exists():
