@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import json
 import subprocess
 import sys
@@ -67,6 +67,29 @@ def _generate_run_id() -> str:
 
 class ChangeDetectionUnavailableError(RuntimeError):
     """Raised when Git cannot provide the change data required for scope enforcement."""
+
+
+class PrepareError(RuntimeError):
+    """Raised when a run cannot be prepared."""
+
+    def __init__(self, message: str, *, exit_code: int = 2) -> None:
+        super().__init__(message)
+        self.exit_code = exit_code
+
+
+@dataclass(frozen=True)
+class RunContext:
+    """Validated state required to execute a run."""
+
+    plan_path: Path
+    steps: list[ParsedStep]
+    progress: dict[str, Any]
+    progress_path: Path
+    automation_dir: Path
+    log_path: Path
+    run_id: str
+    config: WaterfallRunnerConfig
+    compiled_plan: dict[str, Any]
 
 
 def _create_default_change_detector(config: WaterfallRunnerConfig | None = None) -> ChangeDetector:
@@ -259,33 +282,32 @@ def _finish_human_gate_with_pre_analysis(
     return STOP_PRE_ANALYSIS_FAILED, False
 
 
-def _load_resume_progress(progress_path: Path) -> tuple[dict[str, Any] | None, int | None]:
-    """Load progress for --resume and convert invalid files into CLI errors."""
+def _load_resume_progress(progress_path: Path) -> dict[str, Any]:
+    """Load progress for --resume, preserving validation diagnostics."""
     try:
-        return load_progress(progress_path), None
+        return load_progress(progress_path)
     except ProgressValidationError as exc:
-        print(f"INVALID_PROGRESS_FILE: {exc}", file=sys.stderr)
-        return None, 2
+        raise PrepareError(f"INVALID_PROGRESS_FILE: {exc}") from exc
     except json.JSONDecodeError as exc:
-        print(f"INVALID_PROGRESS_FILE: Could not parse {progress_path}: {exc}", file=sys.stderr)
-        return None, 2
+        raise PrepareError(
+            f"INVALID_PROGRESS_FILE: Could not parse {progress_path}: {exc}"
+        ) from exc
 
 
 def _check_resume_consistency(
     progress: dict[str, Any],
     steps: list[Any],
     plan_path: Path,
-) -> int | None:
+) -> None:
     """Validate and update progress so resume matches the current plan."""
     current_plan_file = str(plan_path)
     recorded_plan_file = progress.get(PROGRESS_FIELD_PLAN_FILE)
     if recorded_plan_file != current_plan_file:
-        print(
+        raise PrepareError(
             "Resume plan_file mismatch: "
-            f"progress.json records {recorded_plan_file!r}, but CLI plan is {current_plan_file!r}.",
-            file=sys.stderr,
+            f"progress.json records {recorded_plan_file!r}, "
+            f"but CLI plan is {current_plan_file!r}."
         )
-        return 2
 
     plan_step_ids = [step.yaml_block[FIELD_ID] for step in steps]
     plan_step_id_set = set(plan_step_ids)
@@ -293,18 +315,16 @@ def _check_resume_consistency(
 
     for step_id in progress_steps:
         if step_id not in plan_step_id_set:
-            print(
-                f"Resume step mismatch: progress.json contains {step_id}, but that step is not in the plan.",
-                file=sys.stderr,
+            raise PrepareError(
+                f"Resume step mismatch: progress.json contains {step_id}, "
+                "but that step is not in the plan."
             )
-            return 2
 
     for step_id in plan_step_ids:
         if step_id not in progress_steps:
             progress_steps[step_id] = init_step_progress()
 
     progress[PROGRESS_FIELD_PLAN_FILE] = current_plan_file
-    return None
 
 
 def _system_prompt_path_for_type(step_type: str | None, automation_dir: Path) -> str:
@@ -358,7 +378,7 @@ def prepare_run(
     config: Any,
     *,
     resume: bool = False,
-) -> dict[str, Any]:
+) -> RunContext:
     """Validate plan, initialize/load progress, create automation dir.
 
     Args:
@@ -367,13 +387,14 @@ def prepare_run(
         resume: If True, load existing progress instead of starting fresh.
 
     Returns:
-        A context dict with keys: plan_path, steps, progress, progress_path,
-        automation_dir, log_path, run_id, config. On error, returns
-        {"error": "message"}.
+        The validated context required by run().
+
+    Raises:
+        PrepareError: If the plan or resume state cannot be prepared.
     """
     plan_path = Path(plan_path_str)
     if not plan_path.exists():
-        return {"error": f"Plan file not found: {plan_path}"}
+        raise PrepareError(f"Plan file not found: {plan_path}")
 
     _warn_if_protected_paths_disabled(config)
 
@@ -387,45 +408,38 @@ def prepare_run(
             protected_paths=config.protected_paths,
         )
     except CompiledPlanDriftError as exc:
-        return {"error": f"Compiled plan drift detected: {exc}"}
+        raise PrepareError(f"Compiled plan drift detected: {exc}") from exc
     except CompiledPlanError as exc:
-        return {"error": str(exc)}
+        raise PrepareError(str(exc)) from exc
 
     steps = _steps_from_compiled_plan(compiled_plan)
     if not steps:
-        return {"error": "No steps found in implementation plan."}
+        raise PrepareError("No steps found in implementation plan.")
 
     progress_path = automation_dir / "progress.json"
     log_path = automation_dir / "run-log.md"
     run_id = _generate_run_id()
 
     if resume and progress_path.exists():
-        progress, load_error = _load_resume_progress(progress_path)
-        if load_error is not None:
-            return {"error": "Failed to load progress file for resume."}
-        if progress is None:
-            return {"error": "Failed to load progress file for resume."}
-        consistency_error = _check_resume_consistency(progress, steps, plan_path)
-        if consistency_error is not None:
-            return {"error": "Resume consistency check failed."}
+        progress = _load_resume_progress(progress_path)
+        _check_resume_consistency(progress, steps, plan_path)
         progress[PROGRESS_FIELD_LAST_RUN_ID] = run_id
     else:
         progress = _init_progress(steps, str(plan_path), run_id)
 
     save_progress(progress_path, progress)
 
-    return {
-        "error": None,
-        "plan_path": plan_path,
-        "steps": steps,
-        "progress": progress,
-        "progress_path": progress_path,
-        "automation_dir": automation_dir,
-        "log_path": log_path,
-        "run_id": run_id,
-        "config": config,
-        "compiled_plan": compiled_plan,
-    }
+    return RunContext(
+        plan_path=plan_path,
+        steps=steps,
+        progress=progress,
+        progress_path=progress_path,
+        automation_dir=automation_dir,
+        log_path=log_path,
+        run_id=run_id,
+        config=config,
+        compiled_plan=compiled_plan,
+    )
 
 
 def reset_run(config: Any) -> int:
@@ -501,7 +515,7 @@ def _default_adapter_factory(
 
 
 def run(
-    ctx: dict[str, Any],
+    ctx: RunContext,
     *,
     one_step: bool = False,
     approve_human_gates: bool = False,
@@ -511,10 +525,6 @@ def run(
     change_detector: ChangeDetector | None = None,
 ) -> int:
     """Execute the orchestrator loop.
-
-    Callers should check prepared contexts for ``ctx.get("error")`` before
-    calling run(). Direct error-context calls return the existing
-    usage/validation exit code.
 
     Args:
         ctx: Prepared run context returned by prepare_run().
@@ -530,19 +540,15 @@ def run(
     Returns:
         Exit code: 0 success, 1 execution failure, 2 usage/validation error.
     """
-    if ctx.get("error"):
-        print(f"Error: {ctx['error']}", file=sys.stderr)
-        return 2
-
-    plan_path = Path(ctx["plan_path"])
-    steps = ctx["steps"]
-    progress = ctx["progress"]
-    progress_path = Path(ctx["progress_path"])
-    automation_dir = Path(ctx["automation_dir"])
-    log_path = Path(ctx["log_path"])
+    plan_path = ctx.plan_path
+    steps = ctx.steps
+    progress = ctx.progress
+    progress_path = ctx.progress_path
+    automation_dir = ctx.automation_dir
+    log_path = ctx.log_path
     report_path = automation_dir / "whole-plan-report.md"
-    config = ctx["config"]
-    compiled_plan = ctx.get("compiled_plan", {})
+    config = ctx.config
+    compiled_plan = ctx.compiled_plan
     plan_context = compiled_plan.get("plan_description", "")
     compiled_prompts = {
         compiled_step["id"]: compiled_step.get("prompt", "")

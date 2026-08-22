@@ -130,7 +130,7 @@ def _load_run_config(args: argparse.Namespace) -> Any:
 
 def _handle_run(args: argparse.Namespace) -> int:
     """Execute the run subcommand."""
-    from tools.run_plan import prepare_run, reset_run, reset_current_step, run
+    from tools.run_plan import PrepareError, prepare_run, reset_run, reset_current_step, run
 
     try:
         config = _load_run_config(args)
@@ -153,18 +153,20 @@ def _handle_run(args: argparse.Namespace) -> int:
                 "Warning: --approve-human-gates has no effect with --prepare-only.",
                 file=sys.stderr,
             )
-        ctx = prepare_run(str(args.plan_path), config, resume=args.resume)
-        if ctx.get("error"):
-            print(f"Error: {ctx['error']}", file=sys.stderr)
-            return 1
+        try:
+            prepare_run(str(args.plan_path), config, resume=args.resume)
+        except PrepareError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return exc.exit_code
         print("Preparation complete.")
         return 0
 
     # Default: whole-plan mode
-    ctx = prepare_run(str(args.plan_path), config, resume=args.resume)
-    if ctx.get("error"):
-        print(f"Error: {ctx['error']}", file=sys.stderr)
-        return 1
+    try:
+        ctx = prepare_run(str(args.plan_path), config, resume=args.resume)
+    except PrepareError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return exc.exit_code
 
     run_kwargs = {
         "one_step": args.next_step_only,

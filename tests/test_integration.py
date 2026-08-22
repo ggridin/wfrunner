@@ -27,7 +27,7 @@ from tests.helpers import (
     make_plan,
 )
 from tools.orchestrator.change_detector import FakeChangeDetector
-from tools.run_plan import prepare_run, run
+from tools.run_plan import PrepareError, RunContext, prepare_run, run
 
 
 # ---------------------------------------------------------------------------
@@ -39,7 +39,7 @@ def _prepare_context(
     automation_dir: Path,
     *,
     resume: bool = False,
-) -> dict[str, Any]:
+) -> RunContext:
     """Prepare a run context using the test automation directory."""
     config = make_default_config(automation_dir=str(automation_dir))
     return prepare_run(str(plan_file), config, resume=resume)
@@ -126,17 +126,18 @@ class TestInvalidPlanFailsValidation:
     """Acceptance: Invalid metadata fails validation with useful errors."""
 
     def test_missing_plan_file_returns_error(self, tmp_path: Path) -> None:
-        ctx = _prepare_context(tmp_path / "nonexistent.md", tmp_path / ".automation")
-        exit_code = run(ctx)
-        assert exit_code == 2
+        with pytest.raises(PrepareError, match="Plan file not found") as exc_info:
+            _prepare_context(tmp_path / "nonexistent.md", tmp_path / ".automation")
+
+        assert exc_info.value.exit_code == 2
 
     def test_malformed_plan_returns_validation_error(self, tmp_path: Path) -> None:
         plan_file = tmp_path / "bad-plan.md"
         plan_file.write_text("# Plan\n\nNo steps here.", encoding="utf-8")
-        ctx = _prepare_context(plan_file, tmp_path / ".automation")
-        exit_code = run(ctx)
-        # Should fail at validation (no steps) or return 2.
-        assert exit_code == 2
+        with pytest.raises(PrepareError, match="No steps found") as exc_info:
+            _prepare_context(plan_file, tmp_path / ".automation")
+
+        assert exc_info.value.exit_code == 2
 
 
 # ---------------------------------------------------------------------------
@@ -701,9 +702,8 @@ class TestPrepareRunOnly:
             ),
         )
         automation_dir = tmp_path / ".automation"
-        ctx = _prepare_context(plan_file, automation_dir)
+        _prepare_context(plan_file, automation_dir)
 
-        assert ctx["error"] is None
         assert len(fake_agent.invocations) == 0
         assert (automation_dir / "progress.json").exists()
 

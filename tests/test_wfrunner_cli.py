@@ -729,6 +729,33 @@ class TestStatusHandler:
 class TestRunHandler:
     """Run subcommand handler dispatches to run_plan functions."""
 
+    @pytest.mark.parametrize(
+        "diagnostic",
+        [
+            "INVALID_PROGRESS_FILE: missing schema_version",
+            "Resume plan_file mismatch: progress.json records 'old.md'.",
+        ],
+    )
+    def test_prepare_error_preserves_diagnostic_and_exit_code(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        diagnostic: str,
+    ) -> None:
+        from tools.run_plan import PrepareError
+        from tools.wfrunner import main
+
+        config = make_default_config()
+        error = PrepareError(diagnostic)
+        with (
+            mock.patch("tools.wfrunner._load_run_config", return_value=config),
+            mock.patch("tools.run_plan.prepare_run", side_effect=error),
+        ):
+            exit_code = main(["run", str(tmp_path / "plan.md"), "--resume"])
+
+        assert exit_code == error.exit_code
+        assert diagnostic in capsys.readouterr().err
+
     def test_prepare_only_calls_prepare_run(self, tmp_path: Path) -> None:
         from tools.wfrunner import main
 
@@ -742,7 +769,7 @@ class TestRunHandler:
         with (
             mock.patch("tools.wfrunner.load_config", return_value=config),
             mock.patch("tools.wfrunner._load_run_config", return_value=config),
-            mock.patch("tools.run_plan.prepare_run", return_value={"error": None}) as mock_prepare,
+            mock.patch("tools.run_plan.prepare_run", return_value=mock.sentinel.context) as mock_prepare,
         ):
             exit_code = main(["run", str(plan_file), "--prepare-only"])
 
@@ -766,7 +793,7 @@ class TestRunHandler:
         config = make_default_config(automation_dir=str(tmp_path / ".automation"))
         with (
             mock.patch("tools.wfrunner.load_config", return_value=config) as mock_load_config,
-            mock.patch("tools.run_plan.prepare_run", return_value={"error": None}),
+            mock.patch("tools.run_plan.prepare_run", return_value=mock.sentinel.context),
         ):
             exit_code = main(["run", str(plan_file), "--config", str(config_file), "--prepare-only"])
 
@@ -786,7 +813,7 @@ class TestRunHandler:
         config = make_default_config()
         with (
             mock.patch("tools.wfrunner._load_run_config", return_value=config),
-            mock.patch("tools.run_plan.prepare_run", return_value={"error": None}),
+            mock.patch("tools.run_plan.prepare_run", return_value=mock.sentinel.context),
         ):
             exit_code = main(["run", str(plan_file), "--prepare-only", "--approve-human-gates"])
 
@@ -803,7 +830,7 @@ class TestRunHandler:
         plan_file.write_text("# Plan\n", encoding="utf-8")
 
         config = make_default_config()
-        ctx = {"error": None, "plan_path": plan_file}
+        ctx = mock.sentinel.context
         with (
             mock.patch("tools.wfrunner._load_run_config", return_value=config),
             mock.patch("tools.run_plan.prepare_run", return_value=ctx) as mock_prepare,
@@ -822,7 +849,7 @@ class TestRunHandler:
         plan_file.write_text("# Plan\n", encoding="utf-8")
 
         config = make_default_config()
-        ctx = {"error": None, "plan_path": plan_file}
+        ctx = mock.sentinel.context
         with (
             mock.patch("tools.wfrunner._load_run_config", return_value=config),
             mock.patch("tools.run_plan.prepare_run", return_value=ctx),
@@ -840,7 +867,7 @@ class TestRunHandler:
         plan_file.write_text("# Plan\n", encoding="utf-8")
 
         config = make_default_config()
-        ctx = {"error": None, "plan_path": plan_file}
+        ctx = mock.sentinel.context
         with (
             mock.patch("tools.wfrunner._load_run_config", return_value=config),
             mock.patch("tools.run_plan.prepare_run", return_value=ctx),
