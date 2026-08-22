@@ -21,6 +21,7 @@ from tools.constants import (
     STEP_TYPE_IMPLEMENTATION,
 )
 from tools.plan_parser import ParseResult, ParsedStep
+from tools.protected_paths import is_protected_path
 
 
 @dataclass
@@ -51,14 +52,6 @@ def _load_step_schema(schemas_dir: Path | None = None) -> dict[str, Any]:
         schemas_dir = get_project_root() / "schemas"
     schema_path = schemas_dir / "implementation-step.schema.json"
     return json.loads(schema_path.read_text(encoding="utf-8"))
-
-
-def _is_protected_path(file_path: str, protected_paths: tuple[str, ...] | list[str]) -> bool:
-    """Check if a file path matches a protected path or prefix."""
-    for prefix in protected_paths:
-        if file_path == prefix or file_path.startswith(prefix):
-            return True
-    return False
 
 
 def validate_plan(
@@ -223,7 +216,7 @@ def _validate_protected_files(
         if not isinstance(allowed_files, list):
             continue
 
-        protected_files = [f for f in allowed_files if _is_protected_path(f, protected_paths)]
+        protected_files = [f for f in allowed_files if is_protected_path(f, protected_paths)]
         if not protected_files:
             continue
 

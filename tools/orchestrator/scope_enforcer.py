@@ -11,6 +11,7 @@ from tools.constants import (
     VIOLATION_NOT_IN_ALLOWED,
 )
 from tools.plan_parser import ParsedStep
+from tools.protected_paths import is_protected_path
 
 
 @dataclass
@@ -30,21 +31,6 @@ class ProtectedFileResult:
     @property
     def ok(self) -> bool:
         return len(self.violations) == 0
-
-
-def _is_protected(
-    path: str,
-    protected_paths: tuple[str, ...] | list[str],
-) -> bool:
-    """Return True if *path* is a protected file or under a protected prefix."""
-    for entry in protected_paths:
-        if entry.endswith("/"):
-            if path.startswith(entry):
-                return True
-        else:
-            if path == entry:
-                return True
-    return False
 
 
 def _is_allowed(file_path: str, allowed_files: list[str]) -> bool:
@@ -111,7 +97,7 @@ def check_protected_files(
         raise ValueError("protected_paths must be provided explicitly")
 
     allowed_files = step.yaml_block.get(FIELD_ALLOWED_FILES, [])
-    protected_in_step = [f for f in allowed_files if _is_protected(f, protected_paths)]
+    protected_in_step = [f for f in allowed_files if is_protected_path(f, protected_paths)]
 
     if not protected_in_step:
         return result
