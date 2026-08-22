@@ -40,9 +40,14 @@ def _is_allowed(file_path: str, allowed_files: list[str]) -> bool:
         return True
 
     for allowed_file in allowed_files:
-        if allowed_file.endswith("/*"):
-            prefix = allowed_file[:-1]
+        if allowed_file.endswith("/**"):
+            prefix = allowed_file[:-2]
             if file_path.startswith(prefix):
+                return True
+        elif allowed_file.endswith("/*"):
+            prefix = allowed_file[:-1]
+            relative_path = file_path.removeprefix(prefix)
+            if relative_path != file_path and "/" not in relative_path:
                 return True
 
     return False

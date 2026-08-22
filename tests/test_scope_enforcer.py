@@ -250,7 +250,7 @@ class TestAllowedFilesEdgeCases:
 
 
 class TestAllowedFilesFolderPatterns:
-    """Folder patterns ending with /* allow files under that directory."""
+    """Folder patterns distinguish direct children from recursive descendants."""
 
     def test_exact_file_path_match_still_works(self) -> None:
         allowed_files = ["tools/config.py"]
@@ -268,13 +268,26 @@ class TestAllowedFilesFolderPatterns:
 
         assert len(violations) == 0
 
-    def test_folder_pattern_allows_nested_file_under_prefix(self) -> None:
-        allowed_files = ["tests/*"]
-        changed_files = {"tests/sub/deep.py": "modified"}
+    def test_recursive_folder_pattern_allows_direct_and_nested_files(self) -> None:
+        allowed_files = ["docs/**"]
+        changed_files = {
+            "docs/a.md": "modified",
+            "docs/a/b/c/deep.md": "modified",
+        }
 
         violations = check_allowed_files(allowed_files, changed_files)
 
         assert len(violations) == 0
+
+    def test_single_level_folder_pattern_rejects_nested_file(self) -> None:
+        allowed_files = ["docs/*"]
+        changed_files = {"docs/a/b/c/deep.md": "modified"}
+
+        violations = check_allowed_files(allowed_files, changed_files)
+
+        assert len(violations) == 1
+        assert violations[0].file_path == "docs/a/b/c/deep.md"
+        assert violations[0].reason == "not_in_allowed_files"
 
     def test_folder_pattern_rejects_different_prefix(self) -> None:
         allowed_files = ["tests/*"]
@@ -305,7 +318,7 @@ class TestAllowedFilesFolderPatterns:
         assert violations[0].reason == "not_in_allowed_files"
 
     def test_mixed_exact_files_and_folder_patterns(self) -> None:
-        allowed_files = ["tools/config.py", "tests/*"]
+        allowed_files = ["tools/config.py", "tests/**"]
         changed_files = {
             "tools/config.py": "modified",
             "tests/test_foo.py": "created",

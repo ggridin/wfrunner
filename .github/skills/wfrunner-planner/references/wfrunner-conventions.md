@@ -205,6 +205,10 @@ the implementation step may create or modify, including tests, docs, schemas,
 and scripts. Do not include broad directories unless the step intentionally
 authorizes any file under that directory.
 
+Use `directory/*` to allow only files directly within a directory. Use
+`directory/**` when the step intentionally allows files at every depth under
+that directory; for example, write `docs/**` for recursive documentation scope.
+
 New files must be listed before the step runs. Deletions and renames are not
 allowed in Phase 1 execution.
 
