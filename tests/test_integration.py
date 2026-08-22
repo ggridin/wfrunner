@@ -60,7 +60,7 @@ def _load_progress(automation_dir: Path) -> dict[str, Any]:
 
 def _load_progress_schema() -> dict[str, Any]:
     """Load the canonical progress.json schema."""
-    schema_path = Path(__file__).resolve().parent.parent / "docs" / "schemas" / "progress.schema.json"
+    schema_path = Path(__file__).resolve().parent.parent / "schemas" / "progress.schema.json"
     return json.loads(schema_path.read_text(encoding="utf-8"))
 
 
@@ -515,7 +515,7 @@ class TestUnavailableChangeDetection:
 # ---------------------------------------------------------------------------
 
 class TestVerificationProgressShape:
-    """Acceptance: verification progress matches docs/schemas/progress.schema.json."""
+    """Acceptance: verification progress matches schemas/progress.schema.json."""
 
     def test_successful_step_writes_schema_compliant_verification_summary(
         self, tmp_path: Path, fake_agent: FakeAgentAdapter

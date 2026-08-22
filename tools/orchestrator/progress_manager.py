@@ -39,7 +39,7 @@ class ProgressPlanMismatchError(Exception):
 
 
 def _schema_path() -> Path:
-    return get_project_root() / "docs" / "schemas" / "progress.schema.json"
+    return get_project_root() / "schemas" / "progress.schema.json"
 
 
 def _load_schema() -> dict[str, Any]:

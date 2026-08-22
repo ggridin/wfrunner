@@ -54,7 +54,6 @@ _hidden_imports = [
 
 _datas = copy_metadata("wfrunner") + [
     ("schemas/*.json", "schemas"),
-    ("docs/schemas/*.json", "docs/schemas"),
     ("prompts/system_prompt.implementation.md", "prompts"),
     ("prompts/system_prompt.analysis.md", "prompts"),
     (".github/skills/wfrunner-planner/SKILL.md", ".github/skills/wfrunner-planner"),

@@ -33,7 +33,7 @@ except ImportError:  # TDD: STEP-009 introduces ProgressValidationError.
 
 def _load_progress_schema() -> dict[str, Any]:
     """Load the progress JSON schema for validation."""
-    schema_path = Path(__file__).resolve().parent.parent / "docs" / "schemas" / "progress.schema.json"
+    schema_path = Path(__file__).resolve().parent.parent / "schemas" / "progress.schema.json"
     return json.loads(schema_path.read_text(encoding="utf-8"))
 
 
@@ -50,7 +50,7 @@ def _validate_progress(progress: dict[str, Any]) -> None:
 
 class TestPreAnalysisSummaryConformsToSchema:
     """The orchestrator's pre-analysis summary writer must emit a shape that
-    conforms to docs/schemas/progress.schema.json, so ``--resume`` can reload a
+    conforms to schemas/progress.schema.json, so ``--resume`` can reload a
     progress file whose completed steps ran pre-analysis."""
 
     def test_writer_output_validates_against_progress_schema(self) -> None:

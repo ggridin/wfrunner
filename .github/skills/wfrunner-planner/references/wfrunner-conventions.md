@@ -181,6 +181,9 @@ The built-in protected paths are:
 Protected-path changes require a prior `HUMAN_GATE`. Keep that gate close to
 the implementation step and describe the decision being approved.
 
+All runtime JSON schemas, including `progress.schema.json`, live under
+`schemas/`.
+
 ## Verification Authority
 
 Verification belongs to the orchestrator. Agent notes or manually run checks do
