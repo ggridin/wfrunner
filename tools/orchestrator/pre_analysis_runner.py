@@ -22,6 +22,7 @@ from tools.constants import (
     VERIFY_PASS,
     VERIFY_WARN,
 )
+from tools.orchestrator.git import git_visible_snapshot
 
 
 @dataclass
@@ -55,26 +56,6 @@ class PreAnalysisResult:
         if self.failure_reason is not None:
             return False
         return all(cr.status != VERIFY_FAIL for cr in self.command_results)
-
-
-def _git_visible_snapshot(working_dir: Path) -> str | None:
-    """Return Git-visible working tree state, or None outside a Git worktree."""
-    try:
-        result = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=all"],
-            cwd=working_dir,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return None
-
-    if result.returncode != 0:
-        return None
-
-    return result.stdout
 
 
 def _filesystem_snapshot(working_dir: Path, ignored_root: Path) -> dict[str, float]:
@@ -149,7 +130,7 @@ def run_pre_analysis(
     before_git_snapshot: str | None = None
     before_fallback_snapshot: dict[str, float] = {}
     if working_dir is not None:
-        before_git_snapshot = _git_visible_snapshot(working_dir)
+        before_git_snapshot = git_visible_snapshot(working_dir)
         if before_git_snapshot is None:
             before_fallback_snapshot = _filesystem_snapshot(working_dir, automation_dir)
 
@@ -239,7 +220,7 @@ def run_pre_analysis(
 
     # Check tree modification.
     if working_dir is not None:
-        after_git_snapshot = _git_visible_snapshot(working_dir)
+        after_git_snapshot = git_visible_snapshot(working_dir)
         if before_git_snapshot is not None and after_git_snapshot is not None:
             tree_changed = before_git_snapshot != after_git_snapshot
         else:

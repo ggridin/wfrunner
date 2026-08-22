@@ -22,8 +22,13 @@ class ChangeDetector(ABC):
 class GitChangeDetector(ChangeDetector):
     """Git-backed change detector using ``git status --porcelain``."""
 
-    def __init__(self, working_dir: Path) -> None:
+    def __init__(
+        self,
+        working_dir: Path,
+        timeout_seconds: int | None = None,
+    ) -> None:
         self.working_dir = Path(working_dir)
+        self._timeout_seconds = timeout_seconds
 
     def snapshot_before(self) -> None:
         return None
@@ -35,6 +40,7 @@ class GitChangeDetector(ChangeDetector):
             check=True,
             capture_output=True,
             text=True,
+            timeout=self._timeout_seconds,
         )
 
         changes: dict[str, str] = {}

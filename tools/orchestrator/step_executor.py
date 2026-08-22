@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-import subprocess
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -42,6 +41,7 @@ from tools.constants import (
 from tools.orchestrator.agent_adapter import AgentAdapter, AgentInvocationRequest
 from tools.orchestrator.agent_invocation import invoke_agent
 from tools.orchestrator.change_detector import ChangeDetector
+from tools.orchestrator.git import git_visible_snapshot
 from tools.orchestrator.outcomes import StepOutcome
 from tools.orchestrator.pre_analysis_runner import run_pre_analysis
 from tools.orchestrator.retry_controller import RetryController
@@ -158,22 +158,6 @@ def system_prompt_path_for_type(step_type: str | None, automation_dir: Path) -> 
     return str(candidates[0].resolve())
 
 
-def _analysis_git_snapshot(config: WaterfallRunnerConfig) -> str | None:
-    try:
-        result = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=all"],
-            capture_output=True,
-            text=True,
-            timeout=config.git_timeout_seconds,
-            check=False,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return None
-    if result.returncode != 0:
-        return None
-    return result.stdout
-
-
 def _analysis_changed(
     context: StepExecutionContext,
     *,
@@ -183,7 +167,10 @@ def _analysis_changed(
     if context.change_detector is not None:
         return bool(context.change_detector.detect_changes())
     if before_git_snapshot is not None:
-        after_git_snapshot = _analysis_git_snapshot(context.config)
+        after_git_snapshot = git_visible_snapshot(
+            Path("."),
+            context.config.git_timeout_seconds,
+        )
         return after_git_snapshot is None or after_git_snapshot != before_git_snapshot
     if clean_fallback:
         return not context.is_worktree_clean(context.config)
@@ -257,7 +244,10 @@ def execute_analysis_step(context: StepExecutionContext) -> StepExecutionResult:
         if context.change_detector is not None:
             context.change_detector.snapshot_before()
         else:
-            before_git_snapshot = _analysis_git_snapshot(context.config)
+            before_git_snapshot = git_visible_snapshot(
+                Path("."),
+                context.config.git_timeout_seconds,
+            )
             if before_git_snapshot is None:
                 if not context.is_worktree_clean(context.config):
                     return StepExecutionResult(

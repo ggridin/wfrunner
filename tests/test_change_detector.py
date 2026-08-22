@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 from tools.orchestrator.change_detector import FakeChangeDetector, GitChangeDetector
 
@@ -79,6 +80,22 @@ class TestGitChangeDetector:
         detector = GitChangeDetector(repo)
 
         assert detector.detect_changes() == {}
+
+    def test_applies_configured_timeout(self, tmp_path: Path) -> None:
+        detector = GitChangeDetector(tmp_path, timeout_seconds=17)
+
+        with patch("tools.orchestrator.change_detector.subprocess.run") as run:
+            run.return_value.stdout = ""
+            detector.detect_changes()
+
+        run.assert_called_once_with(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=17,
+        )
 
     def test_detects_created_files(self, tmp_path: Path) -> None:
         repo = _init_repo(tmp_path)
