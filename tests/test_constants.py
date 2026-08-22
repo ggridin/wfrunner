@@ -41,6 +41,17 @@ class TestAnalysisStepConstants:
         assert c.FIELD_ARTIFACT_FILES == "artifact_files"
 
 
+class TestCompiledPlanFieldConstants:
+    def test_compiled_plan_field_constants_exist(self) -> None:
+        import tools.constants as c
+
+        assert c.FIELD_SOURCE_FILE == "source_file"
+        assert c.FIELD_SOURCE_SHA256 == "source_sha256"
+        assert c.FIELD_PLAN_DESCRIPTION == "plan_description"
+        assert c.FIELD_METADATA == "metadata"
+        assert c.FIELD_REVIEW_GUIDANCE == "review_guidance"
+
+
 class TestViolationReasonConstants:
     def test_violation_not_in_allowed_preserves_existing_reason(self) -> None:
         import tools.constants as c

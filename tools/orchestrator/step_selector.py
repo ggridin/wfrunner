@@ -8,6 +8,7 @@ from typing import Any
 from tools.constants import (
     FIELD_ID,
     FIELD_TYPE,
+    PROGRESS_FIELD_STATE,
     STATE_DONE,
     STATE_SKIPPED,
     STATE_FAILED,
@@ -53,7 +54,7 @@ def select_next_step(
     for index, step in enumerate(steps):
         step_id = step.yaml_block[FIELD_ID]
         step_type = step.yaml_block.get(FIELD_TYPE, STEP_TYPE_IMPLEMENTATION)
-        state = progress.get(step_id, {}).get("state")
+        state = progress.get(step_id, {}).get(PROGRESS_FIELD_STATE)
 
         # Completed or skipped steps are passed over.
         if state in _TERMINAL_STATES:

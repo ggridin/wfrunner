@@ -22,6 +22,7 @@ from typing import Any
 
 from tools import review_base
 from tools.config import BUILTIN_PROTECTED_PATHS, ConfigNotFoundError, load_config
+from tools.constants import PROGRESS_FIELD_STATE, PROGRESS_FIELD_STEPS
 from tools.data_path import MissingRuntimeResourceError
 from tools.init_project import init as init_project_init
 from tools.plan_compiler import CompiledPlanError, compile_plan_data
@@ -246,7 +247,7 @@ def _handle_status(args: argparse.Namespace) -> int:
         return 0
 
     progress = json.loads(progress_path.read_text(encoding="utf-8"))
-    steps_progress = progress.get("steps", {})
+    steps_progress = progress.get(PROGRESS_FIELD_STEPS, {})
 
     # Print status table
     print(f"{'Step ID':<15} {'Title':<40} {'State':<15}")
@@ -254,7 +255,7 @@ def _handle_status(args: argparse.Namespace) -> int:
     for step in parse_result.steps:
         step_id = step.heading_id
         title = step.heading_title[:40]
-        step_state = steps_progress.get(step_id, {}).get("state", "UNKNOWN")
+        step_state = steps_progress.get(step_id, {}).get(PROGRESS_FIELD_STATE, "UNKNOWN")
         print(f"{step_id:<15} {title:<40} {step_state:<15}")
 
     return 0

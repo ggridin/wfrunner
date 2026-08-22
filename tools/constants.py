@@ -40,6 +40,11 @@ FIELD_RETRY = "retry"
 FIELD_MAX_FIX_ATTEMPTS = "max_fix_attempts"
 FIELD_DESCRIPTION = "description"
 FIELD_ARTIFACT_FILES = "artifact_files"
+FIELD_SOURCE_FILE = "source_file"
+FIELD_SOURCE_SHA256 = "source_sha256"
+FIELD_PLAN_DESCRIPTION = "plan_description"
+FIELD_METADATA = "metadata"
+FIELD_REVIEW_GUIDANCE = "review_guidance"
 
 # ---------------------------------------------------------------------------
 # Step types
