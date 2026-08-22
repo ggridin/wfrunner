@@ -37,7 +37,6 @@ renumbering STEP IDs.
 | --- | --- |
 | Use `### STEP-001 - Title` headings with one YAML block per step. | Add custom YAML fields that the schema does not allow. |
 | Keep `allowed_files` strict, repository-relative, and complete. | Treat verification prose as a substitute for executable commands. |
-| Order behavior-changing work Red-Green: test step first, then implementation. | Hide test creation inside a later implementation step. |
 | Use `IMPLEMENTATION` only for file-changing work. | Put `agent`, `allowed_files`, or `retry` on `HUMAN_GATE` steps. |
 | Validate after plan edits and after renumbering. | Leave duplicate, skipped, or non-contiguous step IDs. |
 
