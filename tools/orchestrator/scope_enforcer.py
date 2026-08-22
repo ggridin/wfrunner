@@ -9,6 +9,7 @@ from tools.constants import (
     FIELD_TYPE,
     STEP_TYPE_HUMAN_GATE,
     VIOLATION_NOT_IN_ALLOWED,
+    VIOLATION_PROTECTED_FILE,
 )
 from tools.plan_parser import ParsedStep
 from tools.protected_paths import is_protected_path
@@ -74,7 +75,8 @@ def check_protected_files(
     step: ParsedStep,
     step_index: int,
     all_steps: list[ParsedStep],
-    protected_paths: list[str] | tuple[str, ...] | None = None,
+    *,
+    protected_paths: list[str] | tuple[str, ...],
 ) -> ProtectedFileResult:
     """Check whether a step's allowed_files touch protected paths
     and whether the immediately preceding step is a HUMAN_GATE.
@@ -93,9 +95,6 @@ def check_protected_files(
     if step.yaml_block.get(FIELD_TYPE) == STEP_TYPE_HUMAN_GATE:
         return result
 
-    if protected_paths is None:
-        raise ValueError("protected_paths must be provided explicitly")
-
     allowed_files = step.yaml_block.get(FIELD_ALLOWED_FILES, [])
     protected_in_step = [f for f in allowed_files if is_protected_path(f, protected_paths)]
 
@@ -112,7 +111,7 @@ def check_protected_files(
     if not has_gate:
         for f in protected_in_step:
             result.violations.append(
-                ScopeViolation(file_path=f, reason=VIOLATION_NOT_IN_ALLOWED)
+                ScopeViolation(file_path=f, reason=VIOLATION_PROTECTED_FILE)
             )
 
     return result
