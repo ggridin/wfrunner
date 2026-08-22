@@ -13,6 +13,7 @@ import pytest
 
 from tests.fake_agent import FakeAgentAdapter, FileAction
 from tests.helpers import (
+    make_default_config,
     make_implementation_step,
     make_plan,
 )
@@ -965,6 +966,85 @@ retry:
 
         invocation = fake.invocations[0]
         assert invocation.agent_name == "default"
+
+
+# ===========================================================================
+# Retry invocation contract: validation and configuration resolution
+# ===========================================================================
+
+
+class TestRetryInvocationContract:
+    """Fix attempts use the same validated, resolved invocation path."""
+
+    def test_malformed_fix_result_is_rejected(self, tmp_path: Path) -> None:
+        from tools.orchestrator.retry_controller import RetryController
+
+        step = _parse_steps(make_plan(_step_with_retry(max_fix_attempts=1)))[0]
+        fake = FakeAgentAdapter()
+        fake.enqueue_malformed_json("{not valid json at all}")
+        controller = RetryController(
+            step=step,
+            adapter=fake,
+            automation_dir=tmp_path / ".automation",
+            failure_summary=_make_failure_summary(),
+        )
+
+        result = controller.attempt_fix()
+
+        assert result.ok is False
+        assert result.invalid_result is True
+        assert result.failure_reason is not None
+
+    def test_step_id_mismatched_fix_result_is_rejected(self, tmp_path: Path) -> None:
+        from tools.orchestrator.retry_controller import RetryController
+
+        step = _parse_steps(make_plan(_step_with_retry(max_fix_attempts=1)))[0]
+        fake = FakeAgentAdapter()
+        fake.enqueue_mismatched_step("STEP-001", returned_step_id="STEP-999")
+        controller = RetryController(
+            step=step,
+            adapter=fake,
+            automation_dir=tmp_path / ".automation",
+            failure_summary=_make_failure_summary(),
+        )
+
+        result = controller.attempt_fix()
+
+        assert result.ok is False
+        assert result.invalid_result is True
+        assert result.failure_reason is not None
+        assert "mismatch" in result.failure_reason
+
+    def test_resolved_agent_and_model_reach_adapter(self, tmp_path: Path) -> None:
+        from tools.orchestrator.retry_controller import RetryController
+
+        step = _parse_steps(
+            make_plan(
+                make_implementation_step(
+                    agent="default",
+                    model="default",
+                    max_fix_attempts=1,
+                )
+            )
+        )[0]
+        fake = FakeAgentAdapter()
+        fake.enqueue_done(step_id="STEP-001")
+        controller = RetryController(
+            step=step,
+            adapter=fake,
+            automation_dir=tmp_path / ".automation",
+            failure_summary=_make_failure_summary(),
+            config=make_default_config(
+                default_agent="resolved-agent",
+                default_model="resolved-model",
+            ),
+        )
+
+        result = controller.attempt_fix()
+
+        assert result.ok is True
+        assert fake.invocations[0].agent_name == "resolved-agent"
+        assert fake.invocations[0].model == "resolved-model"
 
 
 # ===========================================================================
