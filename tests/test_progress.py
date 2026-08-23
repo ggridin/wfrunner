@@ -17,6 +17,7 @@ from tests.helpers import (
     make_progress,
     write_progress,
 )
+from tools.constants import FAILURE_CHANGE_DETECTION_UNAVAILABLE
 try:
     from tools.orchestrator.progress_manager import ProgressValidationError, load_progress
 except ImportError:  # TDD: STEP-009 introduces ProgressValidationError.
@@ -33,7 +34,7 @@ except ImportError:  # TDD: STEP-009 introduces ProgressValidationError.
 
 def _load_progress_schema() -> dict[str, Any]:
     """Load the progress JSON schema for validation."""
-    schema_path = Path(__file__).resolve().parent.parent / "docs" / "schemas" / "progress.schema.json"
+    schema_path = Path(__file__).resolve().parent.parent / "schemas" / "progress.schema.json"
     return json.loads(schema_path.read_text(encoding="utf-8"))
 
 
@@ -50,7 +51,7 @@ def _validate_progress(progress: dict[str, Any]) -> None:
 
 class TestPreAnalysisSummaryConformsToSchema:
     """The orchestrator's pre-analysis summary writer must emit a shape that
-    conforms to docs/schemas/progress.schema.json, so ``--resume`` can reload a
+    conforms to schemas/progress.schema.json, so ``--resume`` can reload a
     progress file whose completed steps ran pre-analysis."""
 
     def test_writer_output_validates_against_progress_schema(self) -> None:
@@ -650,6 +651,57 @@ class TestProgressSchemaValidationOnLoad:
             steps={
                 "STEP-001": {
                     "state": "TODO",
+                },
+            }
+        )
+        progress_path = tmp_path / "progress.json"
+        write_progress(progress_path, progress)
+
+        loaded = load_progress(progress_path)
+
+        assert loaded == progress
+
+    def test_legacy_blocked_human_gate_loads_successfully(
+        self, tmp_path: Path
+    ) -> None:
+        """Old HUMAN_GATE failure reasons remain valid with null used for new gates."""
+        progress = make_progress(
+            steps={
+                "STEP-001": {
+                    "state": "BLOCKED",
+                    "completed_at": "2025-01-01T00:01:00Z",
+                    "failure_reason": {
+                        "code": "HUMAN_GATE",
+                        "message": "Human review required at STEP-001.",
+                    },
+                },
+            }
+        )
+        progress_path = tmp_path / "progress.json"
+        write_progress(progress_path, progress)
+
+        loaded = load_progress(progress_path)
+
+        assert loaded == progress
+
+    def test_change_detection_unavailable_block_survives_resume(
+        self, tmp_path: Path
+    ) -> None:
+        """Regression (REVIEW-003): the recoverable block must reload on resume.
+
+        run_plan writes CHANGE_DETECTION_UNAVAILABLE when git change detection
+        cannot be initialized. If the schema rejects that code, load_progress
+        fails on resume and masks the real cause as INVALID_PROGRESS_FILE.
+        """
+        progress = make_progress(
+            steps={
+                "STEP-001": {
+                    "state": "BLOCKED",
+                    "completed_at": "2025-01-01T00:01:00Z",
+                    "failure_reason": {
+                        "code": FAILURE_CHANGE_DETECTION_UNAVAILABLE,
+                        "message": "Git change detection is unavailable.",
+                    },
                 },
             }
         )

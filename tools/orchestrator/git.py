@@ -8,9 +8,35 @@ from pathlib import Path
 from tools.config import WaterfallRunnerConfig
 from tools.orchestrator.change_detector import GitChangeDetector
 
+# Backward-compatible import used by the protected orchestration entry point.
+ConfiguredGitChangeDetector = GitChangeDetector
+
 
 def git_timeout(config: WaterfallRunnerConfig | None) -> int:
     return config.git_timeout_seconds if config is not None else 30
+
+
+def git_visible_snapshot(
+    working_dir: Path,
+    timeout_seconds: int = 30,
+) -> str | None:
+    """Return Git-visible working tree state, or None if it cannot be read."""
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=working_dir,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+
+    if result.returncode != 0:
+        return None
+
+    return result.stdout
 
 
 def is_worktree_clean(config: WaterfallRunnerConfig | None = None) -> bool:
@@ -26,43 +52,6 @@ def is_worktree_clean(config: WaterfallRunnerConfig | None = None) -> bool:
         return result.returncode == 0 and result.stdout.strip() == ""
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return False
-
-
-class ConfiguredGitChangeDetector(GitChangeDetector):
-    """Git change detector that applies the orchestrator Git timeout."""
-
-    def __init__(self, working_dir: Path, timeout_seconds: int) -> None:
-        super().__init__(working_dir)
-        self._timeout_seconds = timeout_seconds
-
-    def detect_changes(self) -> dict[str, str]:
-        result = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=all"],
-            cwd=self.working_dir,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=self._timeout_seconds,
-        )
-
-        changes: dict[str, str] = {}
-        for line in result.stdout.splitlines():
-            if not line:
-                continue
-
-            status = line[:2]
-            raw = line[3:]
-
-            if "R" in status and " -> " in raw:
-                src, dest = raw.split(" -> ", 1)
-                changes[src.replace("\\", "/")] = "deleted"
-                changes[dest.replace("\\", "/")] = "renamed"
-            else:
-                change_type = self._change_type(status)
-                if change_type is not None:
-                    changes[raw.replace("\\", "/")] = change_type
-
-        return changes
 
 
 def git_commit(

@@ -93,7 +93,7 @@ If verification returns `FAIL` and the step allows retry, WaterfallRunner feeds 
 
 WaterfallRunner reads runtime configuration from `.wfrunner/wfrunner.toml`. This file is Git-ignored and user-local. It controls settings such as the default model, automation directory, Copilot CLI tool permissions and timeout, protected paths, Git timeouts, pre-analysis timeout, and Git commit/push behavior.
 
-`wfrunner run` requires a config file, either through `--config` or the default `.wfrunner/wfrunner.toml`. `wfrunner validate` can run without config, but then it skips protected-path validation. The file uses top-level keys and optional TOML sections (`[copilot_cli]`, `[protected_paths]`, `[git]`).
+`wfrunner run` requires a config file, either through `--config` or the default `.wfrunner/wfrunner.toml`. `wfrunner validate` can run without config; it then validates protected-path rules against the built-in protected-path floor instead of a project-specific list. The file uses top-level keys and optional TOML sections (`[copilot_cli]`, `[protected_paths]`, `[git]`).
 
 ## Runtime state
 

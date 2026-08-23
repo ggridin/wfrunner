@@ -40,3 +40,12 @@ coverage.xml
 # OS
 .DS_Store
 Thumbs.db
+
+# >>> WaterfallRunner managed >>>
+/.wfrunner/
+/wfrunner.exe
+/.wfrunner/automation/plan.compiled.json
+.github/agents/default.wfrunner.agent.md
+.github/agents/codereview.agent.md
+.github/agents/codefix.agent.md
+# <<< WaterfallRunner managed <<<

@@ -11,6 +11,7 @@ from typing import Any
 from tests.helpers import (
     make_progress,
 )
+from tools.orchestrator.report_generator import generate_whole_plan_report
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +83,7 @@ def _make_failed_step_progress(
 
 
 def _make_blocked_gate_progress() -> dict[str, Any]:
-    """Build a per-step progress entry for a BLOCKED human gate."""
+    """Build a per-step progress entry for a planned human gate pause."""
     return {
         "state": "BLOCKED",
         "agent": None,
@@ -93,10 +94,7 @@ def _make_blocked_gate_progress() -> dict[str, Any]:
         "verification": None,
         "fix_attempts": 0,
         "commit": None,
-        "failure_reason": {
-            "code": "HUMAN_GATE",
-            "message": "Stopped at HUMAN_GATE: Review step",
-        },
+        "failure_reason": None,
     }
 
 
@@ -173,7 +171,7 @@ class TestWholePlanReportStoppedAt:
         )
         step2 = progress["steps"]["STEP-002"]
         assert step2["state"] == "BLOCKED"
-        assert step2["failure_reason"]["code"] == "HUMAN_GATE"
+        assert step2["failure_reason"] is None
 
     def test_stopped_at_failed_verification(self) -> None:
         """Report should indicate stop at verification failure."""
@@ -250,10 +248,43 @@ class TestWholePlanReportHumanAction:
                 "STEP-002": _make_blocked_gate_progress(),
             }
         )
-        # The blocked step should contain enough info for the report generator
         step2 = progress["steps"]["STEP-002"]
-        assert step2["failure_reason"]["code"] == "HUMAN_GATE"
-        assert "HUMAN_GATE" in step2["failure_reason"]["message"]
+        assert step2["state"] == "BLOCKED"
+        assert step2["failure_reason"] is None
+
+    def test_gated_step_has_own_report_section(self, tmp_path: Any) -> None:
+        progress = make_progress(
+            steps={"STEP-002": _make_blocked_gate_progress()}
+        )
+        report_path = tmp_path / "whole-plan-report.md"
+
+        generate_whole_plan_report(report_path, progress, stop_reason="HUMAN_GATE")
+
+        report = report_path.read_text(encoding="utf-8")
+        assert "- Blocked: 0" in report
+        assert "- Gated: 1" in report
+        assert "## Gated Steps" in report
+        assert "## Blocked Steps" not in report
+
+    def test_legacy_blocked_gate_uses_gated_report_section(
+        self, tmp_path: Any
+    ) -> None:
+        legacy_gate = _make_blocked_gate_progress()
+        legacy_gate["state"] = "BLOCKED"
+        legacy_gate["failure_reason"] = {
+            "code": "HUMAN_GATE",
+            "message": "Human review required at STEP-002.",
+        }
+        progress = make_progress(steps={"STEP-002": legacy_gate})
+        report_path = tmp_path / "whole-plan-report.md"
+
+        generate_whole_plan_report(report_path, progress)
+
+        report = report_path.read_text(encoding="utf-8")
+        assert "- Blocked: 0" in report
+        assert "- Gated: 1" in report
+        assert "## Gated Steps" in report
+        assert "## Blocked Steps" not in report
 
 
 class TestWholePlanReportMaxStepsReached:

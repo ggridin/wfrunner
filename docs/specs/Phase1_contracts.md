@@ -28,7 +28,7 @@ WaterfallRunner reads runtime configuration from `.wfrunner/wfrunner.toml`. This
 | File path | `.wfrunner/wfrunner.toml` |
 | Format | TOML |
 | Required for `wfrunner run` | Yes. If neither `--config` nor the default file exists, `run` fails with an actionable configuration error. |
-| Required for `wfrunner validate` | No. If config is absent, validation skips protected-path checks. |
+| Required for `wfrunner validate` | No. If config is absent, validation applies the built-in protected-path floor. |
 | Git status | Git-ignored (`.wfrunner/` is in `.gitignore`). |
 | Protected | Yes. `.wfrunner/wfrunner.toml` is part of the built-in protected-path floor. |
 
@@ -324,7 +324,7 @@ CLI commands:
 | `wfrunner run <plan_path> --reset` | Reset runtime progress for the plan. |
 | `wfrunner run <plan_path> --reset-current-step` | Reset the current failed or in-progress step. |
 | `wfrunner run <plan_path> --approve-human-gates` | Auto-approve `HUMAN_GATE` steps after optional pre-analysis passes. |
-| `wfrunner validate <plan_path> [--config PATH]` | Validate plan structure and, when config is available, protected-path rules. |
+| `wfrunner validate <plan_path> [--config PATH]` | Validate plan structure and protected-path rules, using the configured list when available and the built-in floor otherwise. |
 | `wfrunner status <plan_path>` | Show progress status without requiring config. |
 | `wfrunner init` | Write the starter `.wfrunner/wfrunner.toml` and prompts. |
 

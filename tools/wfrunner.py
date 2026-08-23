@@ -21,14 +21,21 @@ from pathlib import Path
 from typing import Any
 
 from tools import review_base
-from tools.config import ConfigNotFoundError, load_config
+from tools.config import BUILTIN_PROTECTED_PATHS, ConfigNotFoundError, load_config
+from tools.constants import (
+    EXIT_EXECUTION_FAILURE,
+    EXIT_SUCCESS,
+    EXIT_USAGE_VALIDATION_ERROR,
+    PROGRESS_FIELD_STATE,
+    PROGRESS_FIELD_STEPS,
+)
 from tools.data_path import MissingRuntimeResourceError
 from tools.init_project import init as init_project_init
 from tools.plan_compiler import CompiledPlanError, compile_plan_data
 from tools.plan_parser import parse_plan_file
 
 
-PACKAGING_ERROR_EXIT_CODE = 2
+PACKAGING_ERROR_EXIT_CODE = EXIT_USAGE_VALIDATION_ERROR
 
 
 def _get_version() -> str:
@@ -79,6 +86,12 @@ def build_parser() -> argparse.ArgumentParser:
                             help="Reset current step to TODO.")
     run_parser.add_argument("--approve-human-gates", action="store_true", default=False,
                             help="Auto-approve HUMAN_GATE steps after successful pre-analysis.")
+    run_parser.add_argument(
+        "--no-scope-enforcement",
+        action="store_true",
+        default=False,
+        help="Continue without Git-backed change detection and scope enforcement.",
+    )
 
     # --- validate ---
     validate_parser = subparsers.add_parser("validate", help="Validate an implementation plan.")
@@ -123,7 +136,12 @@ def _load_run_config(args: argparse.Namespace) -> Any:
 
 def _handle_run(args: argparse.Namespace) -> int:
     """Execute the run subcommand."""
-    from tools.run_plan import prepare_run, reset_run, reset_current_step, run
+    from tools.run_plan import PrepareError, prepare_run, reset_run, reset_current_step, run
+
+    plan_path = Path(args.plan_path)
+    if not plan_path.exists():
+        print(f"Error: Plan file not found: {plan_path}", file=sys.stderr)
+        return EXIT_USAGE_VALIDATION_ERROR
 
     try:
         config = _load_run_config(args)
@@ -132,7 +150,7 @@ def _handle_run(args: argparse.Namespace) -> int:
             f"Error: {exc}\nRun 'wfrunner init' to create configuration.",
             file=sys.stderr,
         )
-        return 1
+        return EXIT_USAGE_VALIDATION_ERROR
 
     if args.reset:
         return reset_run(config)
@@ -146,24 +164,28 @@ def _handle_run(args: argparse.Namespace) -> int:
                 "Warning: --approve-human-gates has no effect with --prepare-only.",
                 file=sys.stderr,
             )
-        ctx = prepare_run(str(args.plan_path), config, resume=args.resume)
-        if ctx.get("error"):
-            print(f"Error: {ctx['error']}", file=sys.stderr)
-            return 1
+        try:
+            prepare_run(str(args.plan_path), config, resume=args.resume)
+        except PrepareError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return exc.exit_code
         print("Preparation complete.")
-        return 0
+        return EXIT_SUCCESS
 
     # Default: whole-plan mode
-    ctx = prepare_run(str(args.plan_path), config, resume=args.resume)
-    if ctx.get("error"):
-        print(f"Error: {ctx['error']}", file=sys.stderr)
-        return 1
+    try:
+        ctx = prepare_run(str(args.plan_path), config, resume=args.resume)
+    except PrepareError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return exc.exit_code
 
-    return run(
-        ctx,
-        one_step=args.next_step_only,
-        approve_human_gates=args.approve_human_gates,
-    )
+    run_kwargs = {
+        "one_step": args.next_step_only,
+        "approve_human_gates": args.approve_human_gates,
+    }
+    if args.no_scope_enforcement:
+        run_kwargs["no_scope_enforcement"] = True
+    return run(ctx, **run_kwargs)
 
 
 def _handle_validate(args: argparse.Namespace) -> int:
@@ -171,31 +193,39 @@ def _handle_validate(args: argparse.Namespace) -> int:
     plan_path = Path(args.plan_path)
     if not plan_path.exists():
         print(f"Error: Plan file not found: {plan_path}", file=sys.stderr)
-        return 2
+        return EXIT_USAGE_VALIDATION_ERROR
 
     # Try to load config for protected_paths validation
-    protected_paths = None
+    protected_paths = BUILTIN_PROTECTED_PATHS
     if args.config:
         try:
             config = load_config(config_file=Path(args.config))
             protected_paths = config.protected_paths
-        except ConfigNotFoundError:
-            pass
+        except ConfigNotFoundError as exc:
+            print(
+                f"Error: {exc}\nRun 'wfrunner init' to create configuration.",
+                file=sys.stderr,
+            )
+            return EXIT_USAGE_VALIDATION_ERROR
     else:
         try:
             config = load_config(project_root=Path.cwd())
             protected_paths = config.protected_paths
         except ConfigNotFoundError:
-            pass
+            print(
+                "Note: Project-specific protected paths were unavailable; "
+                "using built-in protected paths.",
+                file=sys.stderr,
+            )
 
     try:
         compiled = compile_plan_data(plan_path, protected_paths=protected_paths)
     except CompiledPlanError as exc:
         print(f"Validation failed: {exc}")
-        return 1
+        return EXIT_EXECUTION_FAILURE
 
     print(f"Plan is valid. {len(compiled['steps'])} step(s) found.")
-    return 0
+    return EXIT_SUCCESS
 
 
 def _handle_status(args: argparse.Namespace) -> int:
@@ -203,12 +233,12 @@ def _handle_status(args: argparse.Namespace) -> int:
     plan_path = Path(args.plan_path)
     if not plan_path.exists():
         print(f"Error: Plan file not found: {plan_path}", file=sys.stderr)
-        return 2
+        return EXIT_USAGE_VALIDATION_ERROR
 
     parse_result = parse_plan_file(plan_path)
     if not parse_result.ok:
         print(f"Error: Could not parse plan: {plan_path}", file=sys.stderr)
-        return 1
+        return EXIT_EXECUTION_FAILURE
 
     automation_dir = Path(".wfrunner") / "automation"
     try:
@@ -220,17 +250,17 @@ def _handle_status(args: argparse.Namespace) -> int:
                 f"Error: {exc}\nRun 'wfrunner init' to create configuration.",
                 file=sys.stderr,
             )
-            return 1
+            return EXIT_USAGE_VALIDATION_ERROR
 
     # Look for progress.json
     progress_path = automation_dir / "progress.json"
 
     if not progress_path.exists():
         print("No execution data found.")
-        return 0
+        return EXIT_SUCCESS
 
     progress = json.loads(progress_path.read_text(encoding="utf-8"))
-    steps_progress = progress.get("steps", {})
+    steps_progress = progress.get(PROGRESS_FIELD_STEPS, {})
 
     # Print status table
     print(f"{'Step ID':<15} {'Title':<40} {'State':<15}")
@@ -238,10 +268,10 @@ def _handle_status(args: argparse.Namespace) -> int:
     for step in parse_result.steps:
         step_id = step.heading_id
         title = step.heading_title[:40]
-        step_state = steps_progress.get(step_id, {}).get("state", "UNKNOWN")
+        step_state = steps_progress.get(step_id, {}).get(PROGRESS_FIELD_STATE, "UNKNOWN")
         print(f"{step_id:<15} {title:<40} {step_state:<15}")
 
-    return 0
+    return EXIT_SUCCESS
 
 
 def _handle_init(_args: argparse.Namespace) -> int:
@@ -258,7 +288,7 @@ def _handle_review_base(args: argparse.Namespace) -> int:
         "Error: review-base requires a subcommand: 'record' or 'diff'.",
         file=sys.stderr,
     )
-    return 2
+    return EXIT_USAGE_VALIDATION_ERROR
 
 
 _HANDLERS = {
@@ -286,14 +316,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if not argv:
         parser.print_help(sys.stderr)
-        return 2
+        return EXIT_USAGE_VALIDATION_ERROR
 
     args = parser.parse_args(argv)
 
     handler = _HANDLERS.get(args.subcommand)
     if handler is None:
         parser.print_help(sys.stderr)
-        return 2
+        return EXIT_USAGE_VALIDATION_ERROR
 
     try:
         return handler(args)

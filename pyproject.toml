@@ -38,7 +38,6 @@ include = ["tools*"]
 
 [tool.setuptools.data-files]
 "schemas" = ["schemas/*.json"]
-"docs/schemas" = ["docs/schemas/*.json"]
 "prompts" = ["prompts/system_prompt.implementation.md", "prompts/system_prompt.analysis.md"]
 ".github/skills/wfrunner-planner" = [".github/skills/wfrunner-planner/SKILL.md"]
 ".github/skills/wfrunner-planner/references" = [".github/skills/wfrunner-planner/references/*.md"]

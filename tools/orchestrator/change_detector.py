@@ -22,19 +22,51 @@ class ChangeDetector(ABC):
 class GitChangeDetector(ChangeDetector):
     """Git-backed change detector using ``git status --porcelain``."""
 
-    def __init__(self, working_dir: Path) -> None:
+    def __init__(
+        self,
+        working_dir: Path,
+        timeout_seconds: int | None = None,
+    ) -> None:
         self.working_dir = Path(working_dir)
+        self._timeout_seconds = timeout_seconds
+        self._baseline: dict[str, str] | None = None
 
     def snapshot_before(self) -> None:
-        return None
+        """Capture the pre-agent baseline so pre-existing changes are excluded.
+
+        Implementation steps run on a clean tree, so the baseline is empty and
+        the delta equals the raw status. ANALYSIS steps may run on a dirty tree,
+        where a raw status would wrongly attribute pre-existing changes to the
+        analysis agent, and would let an agent hide its own work by reverting an
+        unrelated pre-existing change.
+        """
+        self._baseline = self._current_changes()
 
     def detect_changes(self) -> dict[str, str]:
+        current = self._current_changes()
+        if self._baseline is None:
+            return current
+
+        changes = {
+            path: change_type
+            for path, change_type in current.items()
+            if self._baseline.get(path) != change_type
+        }
+        # A path that was changed before the agent ran but is no longer changed
+        # means the agent reverted it, which is itself a modification.
+        for path, change_type in self._baseline.items():
+            if path not in current:
+                changes[path] = change_type
+        return changes
+
+    def _current_changes(self) -> dict[str, str]:
         result = subprocess.run(
             ["git", "status", "--porcelain", "--untracked-files=all"],
             cwd=self.working_dir,
             check=True,
             capture_output=True,
             text=True,
+            timeout=self._timeout_seconds,
         )
 
         changes: dict[str, str] = {}

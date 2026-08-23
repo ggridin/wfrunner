@@ -13,6 +13,7 @@ from tests.helpers import (
     make_implementation_step,
     make_plan,
 )
+from tools.constants import VIOLATION_PROTECTED_FILE
 from tools.plan_parser import parse_plan
 from tools.orchestrator.scope_enforcer import (
     check_allowed_files,
@@ -249,7 +250,7 @@ class TestAllowedFilesEdgeCases:
 
 
 class TestAllowedFilesFolderPatterns:
-    """Folder patterns ending with /* allow files under that directory."""
+    """Folder patterns distinguish direct children from recursive descendants."""
 
     def test_exact_file_path_match_still_works(self) -> None:
         allowed_files = ["tools/config.py"]
@@ -267,13 +268,26 @@ class TestAllowedFilesFolderPatterns:
 
         assert len(violations) == 0
 
-    def test_folder_pattern_allows_nested_file_under_prefix(self) -> None:
-        allowed_files = ["tests/*"]
-        changed_files = {"tests/sub/deep.py": "modified"}
+    def test_recursive_folder_pattern_allows_direct_and_nested_files(self) -> None:
+        allowed_files = ["docs/**"]
+        changed_files = {
+            "docs/a.md": "modified",
+            "docs/a/b/c/deep.md": "modified",
+        }
 
         violations = check_allowed_files(allowed_files, changed_files)
 
         assert len(violations) == 0
+
+    def test_single_level_folder_pattern_rejects_nested_file(self) -> None:
+        allowed_files = ["docs/*"]
+        changed_files = {"docs/a/b/c/deep.md": "modified"}
+
+        violations = check_allowed_files(allowed_files, changed_files)
+
+        assert len(violations) == 1
+        assert violations[0].file_path == "docs/a/b/c/deep.md"
+        assert violations[0].reason == "not_in_allowed_files"
 
     def test_folder_pattern_rejects_different_prefix(self) -> None:
         allowed_files = ["tests/*"]
@@ -304,7 +318,7 @@ class TestAllowedFilesFolderPatterns:
         assert violations[0].reason == "not_in_allowed_files"
 
     def test_mixed_exact_files_and_folder_patterns(self) -> None:
-        allowed_files = ["tools/config.py", "tests/*"]
+        allowed_files = ["tools/config.py", "tests/**"]
         changed_files = {
             "tools/config.py": "modified",
             "tests/test_foo.py": "created",
@@ -365,22 +379,31 @@ class TestAllowedFilesFolderPatterns:
 class TestProtectedPathsRequireExplicitConfig:
     """Protected path checks must not fall back to hidden defaults."""
 
-    def test_none_protected_paths_raises(self) -> None:
-        plan = make_plan(
-            make_implementation_step(
+    @pytest.mark.parametrize("step_type", ["IMPLEMENTATION", "HUMAN_GATE"])
+    def test_omitted_protected_paths_raises_for_every_step_type(
+        self,
+        step_type: str,
+    ) -> None:
+        if step_type == "IMPLEMENTATION":
+            step_text = make_implementation_step(
                 step_id="STEP-001",
                 title="Update agents",
                 allowed_files=[".github/agents/spec-implementer.md"],
-            ),
-        )
+            )
+        else:
+            step_text = make_human_gate_step(
+                step_id="STEP-001",
+                title="Review protected changes",
+            )
+
+        plan = make_plan(step_text)
         steps = _parse_steps(plan)
 
-        with pytest.raises((TypeError, ValueError)):
+        with pytest.raises(TypeError):
             check_protected_files(
                 step=steps[0],
                 step_index=0,
                 all_steps=steps,
-                protected_paths=None,
             )
 
 
@@ -407,6 +430,7 @@ class TestPROT001NoGateBeforeProtectedFile:
 
         assert not result.ok
         assert any("schemas/implementation-step.schema.json" in v.file_path for v in result.violations)
+        assert all(v.reason == VIOLATION_PROTECTED_FILE for v in result.violations)
 
     def test_modifies_agents_without_gate(self) -> None:
         plan = make_plan(

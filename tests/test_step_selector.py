@@ -320,6 +320,9 @@ class TestStepOutcomePolicy:
 
         assert expected.issubset(STEP_OUTCOME_POLICY.keys())
 
+        assert STEP_OUTCOME_POLICY[StepOutcome.VERIFICATION_ERROR].state == "BLOCKED"
+        assert STEP_OUTCOME_POLICY[StepOutcome.VERIFICATION_ERROR].stop_reason == "BLOCKED"
+
     def test_skips_multiple_skipped_steps(self) -> None:
         plan = make_plan(
             make_implementation_step(step_id="STEP-001", title="First step"),

@@ -10,21 +10,24 @@ all work together correctly.
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import pytest
 from jsonschema import Draft202012Validator
 
 from tests.fake_agent import FakeAgentAdapter
 from tests.helpers import (
     make_default_config,
+    make_analysis_step,
     make_human_gate_step,
     make_implementation_step,
     make_plan,
 )
 from tools.orchestrator.change_detector import FakeChangeDetector
-from tools.run_plan import prepare_run, run
+from tools.run_plan import PrepareError, RunContext, prepare_run, run
 
 
 # ---------------------------------------------------------------------------
@@ -36,7 +39,7 @@ def _prepare_context(
     automation_dir: Path,
     *,
     resume: bool = False,
-) -> dict[str, Any]:
+) -> RunContext:
     """Prepare a run context using the test automation directory."""
     config = make_default_config(automation_dir=str(automation_dir))
     return prepare_run(str(plan_file), config, resume=resume)
@@ -57,7 +60,7 @@ def _load_progress(automation_dir: Path) -> dict[str, Any]:
 
 def _load_progress_schema() -> dict[str, Any]:
     """Load the canonical progress.json schema."""
-    schema_path = Path(__file__).resolve().parent.parent / "docs" / "schemas" / "progress.schema.json"
+    schema_path = Path(__file__).resolve().parent.parent / "schemas" / "progress.schema.json"
     return json.loads(schema_path.read_text(encoding="utf-8"))
 
 
@@ -123,17 +126,18 @@ class TestInvalidPlanFailsValidation:
     """Acceptance: Invalid metadata fails validation with useful errors."""
 
     def test_missing_plan_file_returns_error(self, tmp_path: Path) -> None:
-        ctx = _prepare_context(tmp_path / "nonexistent.md", tmp_path / ".automation")
-        exit_code = run(ctx)
-        assert exit_code == 2
+        with pytest.raises(PrepareError, match="Plan file not found") as exc_info:
+            _prepare_context(tmp_path / "nonexistent.md", tmp_path / ".automation")
+
+        assert exc_info.value.exit_code == 2
 
     def test_malformed_plan_returns_validation_error(self, tmp_path: Path) -> None:
         plan_file = tmp_path / "bad-plan.md"
         plan_file.write_text("# Plan\n\nNo steps here.", encoding="utf-8")
-        ctx = _prepare_context(plan_file, tmp_path / ".automation")
-        exit_code = run(ctx)
-        # Should fail at validation (no steps) or return 2.
-        assert exit_code == 2
+        with pytest.raises(PrepareError, match="No steps found") as exc_info:
+            _prepare_context(plan_file, tmp_path / ".automation")
+
+        assert exc_info.value.exit_code == 2
 
 
 # ---------------------------------------------------------------------------
@@ -226,8 +230,12 @@ class TestHumanGateStopsExecution:
         progress = _load_progress(automation_dir)
         assert progress["steps"]["STEP-001"]["state"] == "DONE"
         assert progress["steps"]["STEP-002"]["state"] == "BLOCKED"
-        assert progress["steps"]["STEP-002"]["failure_reason"]["code"] == "HUMAN_GATE"
+        assert progress["steps"]["STEP-002"]["failure_reason"] is None
         assert progress["steps"]["STEP-003"]["state"] == "TODO"
+
+        report = (automation_dir / "whole-plan-report.md").read_text(encoding="utf-8")
+        assert "## Gated Steps" in report
+        assert "## Blocked Steps" not in report
 
 
 # ---------------------------------------------------------------------------
@@ -427,12 +435,92 @@ class TestPostAgentScopeEnforcement:
         assert (automation_dir / "verification" / "STEP-001" / "attempt-1-command-0.summary.json").exists()
 
 
+class TestUnavailableChangeDetection:
+    """Git failures block execution unless scope enforcement is explicitly disabled."""
+
+    @pytest.mark.parametrize(
+        ("git_error", "message_fragment"),
+        [
+            (FileNotFoundError("git"), "not found"),
+            (subprocess.CalledProcessError(128, ["git", "status"]), "exit code 128"),
+            (subprocess.TimeoutExpired(["git", "status"], 30), "timed out after 30 seconds"),
+        ],
+    )
+    @pytest.mark.parametrize("step_type", ["IMPLEMENTATION", "ANALYSIS"])
+    def test_git_detection_failure_blocks_step(
+        self,
+        tmp_path: Path,
+        fake_agent: FakeAgentAdapter,
+        git_error: Exception,
+        message_fragment: str,
+        step_type: str,
+    ) -> None:
+        step = (
+            make_implementation_step(
+                step_id="STEP-001",
+                title="Requires change detection",
+                verification_commands=_passing_verification(),
+            )
+            if step_type == "IMPLEMENTATION"
+            else make_analysis_step(step_id="STEP-001", title="Requires change detection")
+        )
+        plan_file = _write_plan(tmp_path, step)
+        automation_dir = tmp_path / ".automation"
+        ctx = _prepare_context(plan_file, automation_dir)
+
+        with patch(
+            "tools.run_plan._ConfiguredGitChangeDetector.detect_changes",
+            side_effect=git_error,
+        ):
+            exit_code = run(ctx, adapter=fake_agent)
+
+        assert exit_code == 1
+        assert fake_agent.invocations == []
+        step_progress = _load_progress(automation_dir)["steps"]["STEP-001"]
+        assert step_progress["state"] == "BLOCKED"
+        assert step_progress["failure_reason"]["code"] == "CHANGE_DETECTION_UNAVAILABLE"
+        assert message_fragment in step_progress["failure_reason"]["message"]
+
+    def test_explicit_opt_out_allows_run_to_proceed(
+        self,
+        tmp_path: Path,
+        fake_agent: FakeAgentAdapter,
+    ) -> None:
+        plan_file = _write_plan(
+            tmp_path,
+            make_implementation_step(
+                step_id="STEP-001",
+                title="Explicitly unscoped step",
+                verification_commands=_passing_verification(),
+            ),
+        )
+        fake_agent.enqueue_done("STEP-001")
+        automation_dir = tmp_path / ".automation"
+        ctx = _prepare_context(plan_file, automation_dir)
+
+        with (
+            patch("tools.run_plan._is_worktree_clean", return_value=True),
+            patch(
+                "tools.run_plan._create_default_change_detector",
+                side_effect=AssertionError("change detection should be disabled"),
+            ),
+        ):
+            exit_code = run(
+                ctx,
+                adapter=fake_agent,
+                no_scope_enforcement=True,
+            )
+
+        assert exit_code == 0
+        assert _load_progress(automation_dir)["steps"]["STEP-001"]["state"] == "DONE"
+
+
 # ---------------------------------------------------------------------------
 # Integration: Verification progress shape
 # ---------------------------------------------------------------------------
 
 class TestVerificationProgressShape:
-    """Acceptance: verification progress matches docs/schemas/progress.schema.json."""
+    """Acceptance: verification progress matches schemas/progress.schema.json."""
 
     def test_successful_step_writes_schema_compliant_verification_summary(
         self, tmp_path: Path, fake_agent: FakeAgentAdapter
@@ -618,9 +706,8 @@ class TestPrepareRunOnly:
             ),
         )
         automation_dir = tmp_path / ".automation"
-        ctx = _prepare_context(plan_file, automation_dir)
+        _prepare_context(plan_file, automation_dir)
 
-        assert ctx["error"] is None
         assert len(fake_agent.invocations) == 0
         assert (automation_dir / "progress.json").exists()
 
@@ -754,7 +841,7 @@ class TestNoAdapterError:
                 change_detector=FakeChangeDetector({}),
             )
 
-        assert exit_code == 2
+        assert exit_code == 1
 
 
 # ---------------------------------------------------------------------------

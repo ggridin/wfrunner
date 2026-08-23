@@ -6,7 +6,7 @@ import json
 import textwrap
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, TypedDict, cast
+from typing import Any
 from unittest import mock
 
 import pytest
@@ -22,38 +22,27 @@ from tests.helpers import (
     write_progress,
 )
 from tools.config import GitConfig, WaterfallRunnerConfig
+from tools.constants import EXIT_USAGE_VALIDATION_ERROR
 from tools.orchestrator.change_detector import FakeChangeDetector
 from tools.plan_parser import ParsedStep
 from tools.run_plan import (
+    PrepareError,
+    RunContext,
     _verification_step_for_current_shell,
     prepare_run,
     run,
 )
 
 
-class PreparedRunContext(TypedDict):
-    error: str | None
-    plan_path: Path
-    steps: list[ParsedStep]
-    progress: dict[str, Any]
-    progress_path: Path
-    automation_dir: Path
-    log_path: Path
-    run_id: str
-    config: WaterfallRunnerConfig
-
-
 def _prepare_run_context(
     tmp_path: Path,
     *step_blocks: str,
     config: WaterfallRunnerConfig | None = None,
-) -> PreparedRunContext:
+) -> RunContext:
     plan_file = tmp_path / "plan.md"
     plan_file.write_text(make_plan(*step_blocks), encoding="utf-8")
     config = config or make_default_config(automation_dir=str(tmp_path / ".automation"))
-    ctx = prepare_run(str(plan_file), config)
-    assert ctx.get("error") is None
-    return cast(PreparedRunContext, ctx)
+    return prepare_run(str(plan_file), config)
 
 
 class TestVerificationCommandQuoting:
@@ -74,7 +63,7 @@ class TestVerificationCommandQuoting:
                 ],
             ),
         )
-        step = ctx["steps"][0]
+        step = ctx.steps[0]
 
         with mock.patch("tools.run_plan.sys.platform", "win32"):
             normalized_step = _verification_step_for_current_shell(step)
@@ -92,15 +81,13 @@ class TestVerificationCommandQuoting:
 class TestValidationErrors:
     """Verify graceful handling of missing or invalid plans."""
 
-    def test_run_error_context_returns_usage_error(self) -> None:
-        assert run({"error": "message"}) == 2
-
     def test_plan_not_found(self, tmp_path: Path) -> None:
         config = make_default_config(automation_dir=str(tmp_path / ".automation"))
-        ctx = prepare_run(str(tmp_path / "nonexistent.md"), config)
 
-        assert ctx.get("error") is not None
-        assert run(ctx) == 2
+        with pytest.raises(PrepareError, match="Plan file not found") as exc_info:
+            prepare_run(str(tmp_path / "nonexistent.md"), config)
+
+        assert exc_info.value.exit_code == EXIT_USAGE_VALIDATION_ERROR
 
     def test_invalid_plan_returns_2(self, tmp_path: Path) -> None:
         # Plan with a broken step (missing required fields).
@@ -108,10 +95,46 @@ class TestValidationErrors:
         plan_file = tmp_path / "plan.md"
         plan_file.write_text(plan_text, encoding="utf-8")
         config = make_default_config(automation_dir=str(tmp_path / ".automation"))
-        ctx = prepare_run(str(plan_file), config)
+        with pytest.raises(PrepareError) as exc_info:
+            prepare_run(str(plan_file), config)
 
-        assert ctx.get("error") is not None
-        assert run(ctx) == 2
+        assert exc_info.value.exit_code == EXIT_USAGE_VALIDATION_ERROR
+
+
+class TestNoScopeEnforcementFlag:
+    def test_parser_accepts_flag(self) -> None:
+        from tools.wfrunner import build_parser
+
+        args = build_parser().parse_args(
+            ["run", "docs/plan.md", "--no-scope-enforcement"]
+        )
+
+        assert args.no_scope_enforcement is True
+
+    def test_run_handler_forwards_enabled_flag(self, tmp_path: Path) -> None:
+        from tools.wfrunner import main
+
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text("", encoding="utf-8")
+        config = make_default_config(automation_dir=str(tmp_path / ".automation"))
+        ctx = mock.sentinel.run_context
+
+        with (
+            mock.patch("tools.wfrunner._load_run_config", return_value=config),
+            mock.patch("tools.run_plan.prepare_run", return_value=ctx),
+            mock.patch("tools.run_plan.run", return_value=0) as run_mock,
+        ):
+            exit_code = main(
+                ["run", str(plan_file), "--no-scope-enforcement"]
+            )
+
+        assert exit_code == 0
+        run_mock.assert_called_once_with(
+            ctx,
+            one_step=False,
+            approve_human_gates=False,
+            no_scope_enforcement=True,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1220,7 +1243,6 @@ class TestResume:
 
         config = make_default_config(automation_dir=str(automation))
         ctx = prepare_run(str(plan_file), config, resume=True)
-        assert ctx.get("error") is None
 
         with mock.patch("tools.run_plan._is_worktree_clean", return_value=True):
             code = run(ctx, one_step=True, adapter=fake_agent, change_detector=FakeChangeDetector({}))
@@ -1251,12 +1273,12 @@ class TestResume:
         write_progress(automation / "progress.json", progress)
 
         config = make_default_config(automation_dir=str(automation))
-        ctx = prepare_run(str(plan_file), config, resume=True)
+        with pytest.raises(PrepareError) as exc_info:
+            prepare_run(str(plan_file), config, resume=True)
 
-        assert ctx.get("error") is not None
-        assert run(ctx) == 2
+        assert exc_info.value.exit_code == 2
         captured = capsys.readouterr()
-        output = captured.out + captured.err
+        output = str(exc_info.value) + captured.out + captured.err
         assert "plan_file" in output
         assert "resume" in output.lower()
 
@@ -1282,12 +1304,12 @@ class TestResume:
         write_progress(automation / "progress.json", progress)
 
         config = make_default_config(automation_dir=str(automation))
-        ctx = prepare_run(str(plan_file), config, resume=True)
+        with pytest.raises(PrepareError) as exc_info:
+            prepare_run(str(plan_file), config, resume=True)
 
-        assert ctx.get("error") is not None
-        assert run(ctx) == 2
+        assert exc_info.value.exit_code == 2
         captured = capsys.readouterr()
-        output = captured.out + captured.err
+        output = str(exc_info.value) + captured.out + captured.err
         assert "STEP-002" in output
         assert "plan" in output.lower()
 
@@ -1311,9 +1333,8 @@ class TestResume:
         write_progress(automation / "progress.json", progress)
 
         config = make_default_config(automation_dir=str(automation))
-        ctx = prepare_run(str(plan_file), config, resume=True)
+        prepare_run(str(plan_file), config, resume=True)
 
-        assert ctx.get("error") is None
         updated = json.loads((automation / "progress.json").read_text())
         assert updated["steps"]["STEP-002"]["state"] == "TODO"
         assert updated["steps"]["STEP-002"]["verification"] is None
@@ -1343,7 +1364,6 @@ class TestResume:
 
         config = make_default_config(automation_dir=str(automation))
         ctx = prepare_run(str(plan_file), config, resume=True)
-        assert ctx.get("error") is None
 
         with mock.patch("tools.run_plan._is_worktree_clean", return_value=True):
             code = run(ctx, one_step=True, adapter=fake_agent, change_detector=FakeChangeDetector({}))
@@ -1366,12 +1386,11 @@ class TestResume:
         write_progress(automation / "progress.json", {})
 
         config = make_default_config(automation_dir=str(automation))
-        ctx = prepare_run(str(plan_file), config, resume=True)
+        with pytest.raises(PrepareError) as exc_info:
+            prepare_run(str(plan_file), config, resume=True)
 
-        assert ctx.get("error") is not None
-        assert run(ctx) == 2
-        captured = capsys.readouterr()
-        assert "INVALID_PROGRESS_FILE" in captured.out + captured.err
+        assert exc_info.value.exit_code == 2
+        assert "INVALID_PROGRESS_FILE" in str(exc_info.value)
 
     def test_resume_uses_cli_plan_argument_for_plan_file_check(
         self,
@@ -1398,7 +1417,6 @@ class TestResume:
 
         config = make_default_config(automation_dir=str(automation))
         ctx = prepare_run(str(plan_file), config, resume=True)
-        assert ctx.get("error") is None
 
         with mock.patch("tools.run_plan._is_worktree_clean", return_value=True):
             code = run(ctx, one_step=True, adapter=fake_agent, change_detector=FakeChangeDetector({}))
@@ -1430,7 +1448,6 @@ class TestWholePlanMode:
 
         config = make_default_config(automation_dir=str(tmp_path / ".automation"))
         ctx = prepare_run(str(plan_file), config)
-        assert ctx.get("error") is None
 
         with mock.patch("tools.run_plan._is_worktree_clean", return_value=True):
             code = run(ctx, adapter=fake_agent, change_detector=FakeChangeDetector({}))
@@ -1472,7 +1489,6 @@ class TestConfigurationAndAdapterWiring:
         fake_agent.enqueue_done("STEP-001")
 
         ctx = prepare_run(str(plan_file), config)
-        assert ctx.get("error") is None
 
         with mock.patch("tools.run_plan._is_worktree_clean", return_value=True):
             code = run(ctx, one_step=True, adapter=fake_agent, change_detector=FakeChangeDetector({}))
@@ -1504,7 +1520,6 @@ class TestConfigurationAndAdapterWiring:
         fake_agent.enqueue_done("STEP-001")
 
         ctx = prepare_run(str(plan_file), config)
-        assert ctx.get("error") is None
 
         with mock.patch("tools.run_plan._is_worktree_clean", return_value=True):
             code = run(ctx, one_step=True, adapter=fake_agent, change_detector=FakeChangeDetector({}))
@@ -1533,7 +1548,6 @@ class TestConfigurationAndAdapterWiring:
         fake_agent.enqueue_done("STEP-001")
 
         ctx = prepare_run(str(plan_file), config)
-        assert ctx.get("error") is None
 
         with (
             mock.patch("tools.run_plan.CopilotCliAdapter", return_value=fake_agent) as adapter_cls,
@@ -1592,8 +1606,7 @@ class TestPrepareRun:
         config = make_default_config(automation_dir=str(tmp_path / ".automation"))
         ctx = prepare_run(str(plan_file), config)
 
-        assert ctx is not None
-        assert ctx.get("error") is None
+        assert isinstance(ctx, RunContext)
         assert (tmp_path / ".automation" / "progress.json").exists()
 
     def test_invalid_plan_returns_error(self, tmp_path: Path) -> None:
@@ -1603,10 +1616,8 @@ class TestPrepareRun:
         plan_file.write_text("# Empty plan\n", encoding="utf-8")
 
         config = make_default_config(automation_dir=str(tmp_path / ".automation"))
-        ctx = prepare_run(str(plan_file), config)
-
-        assert ctx is not None
-        assert ctx.get("error") is not None
+        with pytest.raises(PrepareError):
+            prepare_run(str(plan_file), config)
 
     def test_resume_mode_loads_existing_progress(self, tmp_path: Path) -> None:
         from tools.run_plan import prepare_run
@@ -1631,10 +1642,9 @@ class TestPrepareRun:
         config = make_default_config(automation_dir=str(automation))
         ctx = prepare_run(str(plan_file), config, resume=True)
 
-        assert ctx is not None
-        assert ctx.get("error") is None
+        assert isinstance(ctx, RunContext)
 
-    def test_resume_mode_returns_error_when_progress_loader_returns_none(
+    def test_resume_mode_preserves_progress_loader_error(
         self,
         tmp_path: Path,
     ) -> None:
@@ -1654,12 +1664,14 @@ class TestPrepareRun:
         )
         config = make_default_config(automation_dir=str(automation))
 
-        with mock.patch("tools.run_plan._load_resume_progress", return_value=(None, None)):
-            ctx = prepare_run(str(plan_file), config, resume=True)
+        error = PrepareError("INVALID_PROGRESS_FILE: precise diagnostic")
+        with (
+            mock.patch("tools.run_plan._load_resume_progress", side_effect=error),
+            pytest.raises(PrepareError, match="precise diagnostic") as exc_info,
+        ):
+            prepare_run(str(plan_file), config, resume=True)
 
-        assert ctx is not None
-        assert ctx.get("error") is not None
-        assert "progress" in ctx["error"]
+        assert exc_info.value is error
 
 
 class TestResetRun:
@@ -1847,7 +1859,6 @@ class TestHumanGatePreAnalysis:
             pre_analysis_timeout_seconds=123,
         )
         ctx = prepare_run(str(plan_file), config)
-        assert ctx.get("error") is None
 
         with mock.patch("tools.run_plan.run_pre_analysis", return_value=pa_result) as mock_pa:
             code = run(ctx, adapter=fake, change_detector=FakeChangeDetector({}))
@@ -1891,7 +1902,6 @@ class TestHumanGatePreAnalysis:
 
         config = make_default_config(automation_dir=str(tmp_path / ".automation"))
         ctx = prepare_run(str(plan_file), config)
-        assert ctx.get("error") is None
 
         with mock.patch("tools.run_plan.run_pre_analysis", return_value=pa_result):
             _code = run(ctx, adapter=fake, change_detector=FakeChangeDetector({}))
@@ -1931,7 +1941,6 @@ class TestHumanGatePreAnalysis:
 
         config = make_default_config(automation_dir=str(tmp_path / ".automation"))
         ctx = prepare_run(str(plan_file), config)
-        assert ctx.get("error") is None
 
         with mock.patch("tools.run_plan.run_pre_analysis", return_value=pa_result):
             _code = run(ctx, adapter=fake, change_detector=FakeChangeDetector({}))
@@ -2054,7 +2063,6 @@ class TestPhase9bOrchestratorContext:
         plan_file.write_text(plan_text, encoding="utf-8")
         config = make_default_config(automation_dir=str(tmp_path / ".automation"))
         ctx = prepare_run(str(plan_file), config)
-        assert ctx.get("error") is None
         fake_agent.enqueue_done("STEP-001")
 
         with mock.patch("tools.run_plan._is_worktree_clean", return_value=True):
@@ -2102,7 +2110,6 @@ class TestPhase9bOrchestratorContext:
         plan_file.write_text(plan_text, encoding="utf-8")
         config = make_default_config(automation_dir=str(tmp_path / ".automation"))
         ctx = prepare_run(str(plan_file), config)
-        assert ctx.get("error") is None
         fake_agent.enqueue_done("STEP-001")
 
         with mock.patch("tools.run_plan._is_worktree_clean", return_value=True):
@@ -2145,7 +2152,6 @@ class TestPhase9bOrchestratorContext:
         plan_file.write_text(plan_text, encoding="utf-8")
         config = make_default_config(automation_dir=str(tmp_path / ".automation"))
         ctx = prepare_run(str(plan_file), config)
-        assert ctx.get("error") is None
         fake_agent.enqueue_done("STEP-001")
 
         with mock.patch("tools.run_plan._is_worktree_clean", return_value=True):

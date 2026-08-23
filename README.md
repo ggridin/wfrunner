@@ -70,6 +70,14 @@ Show current progress for a plan:
 python -m tools.wfrunner status docs/implementation-plan.md
 ```
 
+CLI commands use these exit codes:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success |
+| `1` | Command execution failure, including a plan that fails `validate` |
+| `2` | Usage or run-preparation error, including a missing plan or explicitly requested config file |
+
 Initialize a target project:
 
 ```powershell

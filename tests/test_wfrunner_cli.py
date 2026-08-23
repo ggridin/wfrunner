@@ -14,7 +14,12 @@ from tests.helpers import (
     make_progress,
     write_progress,
 )
-from tools.config import ConfigNotFoundError
+from tools.config import BUILTIN_PROTECTED_PATHS, ConfigNotFoundError
+from tools.constants import (
+    EXIT_EXECUTION_FAILURE,
+    EXIT_SUCCESS,
+    EXIT_USAGE_VALIDATION_ERROR,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -421,7 +426,16 @@ class TestNoArguments:
         from tools.wfrunner import main
 
         exit_code = main([])
-        assert exit_code != 0
+        assert exit_code == EXIT_USAGE_VALIDATION_ERROR
+
+
+class TestExitCodeContract:
+    """Public commands distinguish execution failures from invalid inputs."""
+
+    def test_exit_code_values_are_stable(self) -> None:
+        assert EXIT_SUCCESS == 0
+        assert EXIT_EXECUTION_FAILURE == 1
+        assert EXIT_USAGE_VALIDATION_ERROR == 2
 
 
 # ---------------------------------------------------------------------------
@@ -453,7 +467,7 @@ class TestValidateHandler:
         assert "2" in captured.out  # step count
 
     def test_valid_plan_without_config_exits_0(
-        self, tmp_path: Path,
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
     ) -> None:
         from tools.wfrunner import main
 
@@ -463,7 +477,6 @@ class TestValidateHandler:
         plan_file = tmp_path / "plan.md"
         plan_file.write_text(plan_text, encoding="utf-8")
 
-        # No config file found → ConfigNotFoundError → skip protected-paths
         with mock.patch(
             "tools.wfrunner.load_config",
             side_effect=ConfigNotFoundError("no config"),
@@ -471,6 +484,69 @@ class TestValidateHandler:
             exit_code = main(["validate", str(plan_file)])
 
         assert exit_code == 0
+        assert "using built-in protected paths" in capsys.readouterr().err
+
+    def test_builtin_protected_path_without_config_is_rejected(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from tools.wfrunner import main
+
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text(
+            make_plan(
+                make_implementation_step(
+                    "STEP-001",
+                    title="Touch built-in protected path",
+                    allowed_files=["tools/run_plan.py"],
+                ),
+            ),
+            encoding="utf-8",
+        )
+
+        with mock.patch(
+            "tools.wfrunner.load_config",
+            side_effect=ConfigNotFoundError("no config"),
+        ):
+            exit_code = main(["validate", str(plan_file)])
+
+        assert exit_code == EXIT_EXECUTION_FAILURE
+        captured = capsys.readouterr()
+        assert "protected" in captured.out.lower()
+        assert "using built-in protected paths" in captured.err
+
+    def test_builtin_protected_path_with_project_config_is_rejected(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from tools.wfrunner import main
+
+        project_root = tmp_path / "project"
+        config_dir = project_root / ".wfrunner"
+        config_dir.mkdir(parents=True)
+        (config_dir / "wfrunner.toml").write_text("", encoding="utf-8")
+        plan_file = project_root / "plan.md"
+        plan_file.write_text(
+            make_plan(
+                make_implementation_step(
+                    "STEP-001",
+                    title="Touch built-in protected path",
+                    allowed_files=[BUILTIN_PROTECTED_PATHS[2]],
+                ),
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(project_root)
+        monkeypatch.setattr(
+            "tools.config.user_config_path",
+            lambda: tmp_path / "missing-user.toml",
+        )
+
+        exit_code = main(["validate", str(plan_file)])
+
+        assert exit_code == EXIT_EXECUTION_FAILURE
 
     def test_invalid_plan_exits_1(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
@@ -491,7 +567,7 @@ class TestValidateHandler:
         ):
             exit_code = main(["validate", str(plan_file)])
 
-        assert exit_code == 1
+        assert exit_code == EXIT_EXECUTION_FAILURE
         captured = capsys.readouterr()
         out = captured.out + captured.err
         # Should mention errors
@@ -531,7 +607,23 @@ paths = ["custom/"]
 
         exit_code = main(["validate", str(plan_file), "--config", str(config_file)])
 
-        assert exit_code == 1
+        assert exit_code == EXIT_EXECUTION_FAILURE
+
+    def test_explicit_config_not_found_exits_2(self, tmp_path: Path) -> None:
+        from tools.wfrunner import main
+
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text("# Plan\n", encoding="utf-8")
+
+        with mock.patch(
+            "tools.wfrunner.load_config",
+            side_effect=ConfigNotFoundError("no config"),
+        ):
+            exit_code = main(
+                ["validate", str(plan_file), "--config", str(tmp_path / "missing.toml")]
+            )
+
+        assert exit_code == EXIT_USAGE_VALIDATION_ERROR
 
     def test_plan_file_not_found_exits_2(
         self,
@@ -539,7 +631,7 @@ paths = ["custom/"]
         from tools.wfrunner import main
 
         exit_code = main(["validate", "/nonexistent/plan.md"])
-        assert exit_code == 2
+        assert exit_code == EXIT_USAGE_VALIDATION_ERROR
 
 
 class TestStatusHandler:
@@ -656,7 +748,23 @@ class TestStatusHandler:
         from tools.wfrunner import main
 
         exit_code = main(["status", "/nonexistent/plan.md"])
-        assert exit_code == 2
+        assert exit_code == EXIT_USAGE_VALIDATION_ERROR
+
+    def test_explicit_config_not_found_exits_2(self, tmp_path: Path) -> None:
+        from tools.wfrunner import main
+
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text("# Plan\n", encoding="utf-8")
+
+        with mock.patch(
+            "tools.wfrunner.load_config",
+            side_effect=ConfigNotFoundError("no config"),
+        ):
+            exit_code = main(
+                ["status", str(plan_file), "--config", str(tmp_path / "missing.toml")]
+            )
+
+        assert exit_code == EXIT_USAGE_VALIDATION_ERROR
 
 
 # ---------------------------------------------------------------------------
@@ -666,6 +774,35 @@ class TestStatusHandler:
 
 class TestRunHandler:
     """Run subcommand handler dispatches to run_plan functions."""
+
+    @pytest.mark.parametrize(
+        "diagnostic",
+        [
+            "INVALID_PROGRESS_FILE: missing schema_version",
+            "Resume plan_file mismatch: progress.json records 'old.md'.",
+        ],
+    )
+    def test_prepare_error_preserves_diagnostic_and_exit_code(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        diagnostic: str,
+    ) -> None:
+        from tools.run_plan import PrepareError
+        from tools.wfrunner import main
+
+        config = make_default_config()
+        error = PrepareError(diagnostic)
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text("# Plan\n", encoding="utf-8")
+        with (
+            mock.patch("tools.wfrunner._load_run_config", return_value=config),
+            mock.patch("tools.run_plan.prepare_run", side_effect=error),
+        ):
+            exit_code = main(["run", str(plan_file), "--resume"])
+
+        assert exit_code == error.exit_code
+        assert diagnostic in capsys.readouterr().err
 
     def test_prepare_only_calls_prepare_run(self, tmp_path: Path) -> None:
         from tools.wfrunner import main
@@ -680,7 +817,7 @@ class TestRunHandler:
         with (
             mock.patch("tools.wfrunner.load_config", return_value=config),
             mock.patch("tools.wfrunner._load_run_config", return_value=config),
-            mock.patch("tools.run_plan.prepare_run", return_value={"error": None}) as mock_prepare,
+            mock.patch("tools.run_plan.prepare_run", return_value=mock.sentinel.context) as mock_prepare,
         ):
             exit_code = main(["run", str(plan_file), "--prepare-only"])
 
@@ -704,7 +841,7 @@ class TestRunHandler:
         config = make_default_config(automation_dir=str(tmp_path / ".automation"))
         with (
             mock.patch("tools.wfrunner.load_config", return_value=config) as mock_load_config,
-            mock.patch("tools.run_plan.prepare_run", return_value={"error": None}),
+            mock.patch("tools.run_plan.prepare_run", return_value=mock.sentinel.context),
         ):
             exit_code = main(["run", str(plan_file), "--config", str(config_file), "--prepare-only"])
 
@@ -724,7 +861,7 @@ class TestRunHandler:
         config = make_default_config()
         with (
             mock.patch("tools.wfrunner._load_run_config", return_value=config),
-            mock.patch("tools.run_plan.prepare_run", return_value={"error": None}),
+            mock.patch("tools.run_plan.prepare_run", return_value=mock.sentinel.context),
         ):
             exit_code = main(["run", str(plan_file), "--prepare-only", "--approve-human-gates"])
 
@@ -741,7 +878,7 @@ class TestRunHandler:
         plan_file.write_text("# Plan\n", encoding="utf-8")
 
         config = make_default_config()
-        ctx = {"error": None, "plan_path": plan_file}
+        ctx = mock.sentinel.context
         with (
             mock.patch("tools.wfrunner._load_run_config", return_value=config),
             mock.patch("tools.run_plan.prepare_run", return_value=ctx) as mock_prepare,
@@ -760,7 +897,7 @@ class TestRunHandler:
         plan_file.write_text("# Plan\n", encoding="utf-8")
 
         config = make_default_config()
-        ctx = {"error": None, "plan_path": plan_file}
+        ctx = mock.sentinel.context
         with (
             mock.patch("tools.wfrunner._load_run_config", return_value=config),
             mock.patch("tools.run_plan.prepare_run", return_value=ctx),
@@ -778,7 +915,7 @@ class TestRunHandler:
         plan_file.write_text("# Plan\n", encoding="utf-8")
 
         config = make_default_config()
-        ctx = {"error": None, "plan_path": plan_file}
+        ctx = mock.sentinel.context
         with (
             mock.patch("tools.wfrunner._load_run_config", return_value=config),
             mock.patch("tools.run_plan.prepare_run", return_value=ctx),
@@ -835,7 +972,16 @@ class TestRunHandler:
         ):
             exit_code = main(["run", str(plan_file)])
 
-        assert exit_code != 0
+        assert exit_code == EXIT_USAGE_VALIDATION_ERROR
         captured = capsys.readouterr()
         out = captured.out + captured.err
         assert len(out) > 0
+
+    def test_missing_plan_exits_2_before_config_loading(self, tmp_path: Path) -> None:
+        from tools.wfrunner import main
+
+        with mock.patch("tools.wfrunner._load_run_config") as load_config_mock:
+            exit_code = main(["run", str(tmp_path / "missing-plan.md")])
+
+        assert exit_code == EXIT_USAGE_VALIDATION_ERROR
+        load_config_mock.assert_not_called()

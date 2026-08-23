@@ -9,7 +9,25 @@ from typing import Any
 
 import jsonschema
 
-from tools.data_path import get_project_root
+from tools.constants import (
+    FIELD_AGENT,
+    FIELD_DESCRIPTION,
+    FIELD_ID,
+    FIELD_METADATA,
+    FIELD_MODEL,
+    FIELD_PLAN_DESCRIPTION,
+    FIELD_PROMPT,
+    FIELD_REVIEW_GUIDANCE,
+    FIELD_SCHEMA_VERSION,
+    FIELD_SOURCE_FILE,
+    FIELD_SOURCE_SHA256,
+    FIELD_TITLE,
+    FIELD_TYPE,
+    PROGRESS_FIELD_STEPS,
+    STEP_TYPE_HUMAN_GATE,
+    STEP_TYPE_IMPLEMENTATION,
+)
+from tools.data_path import get_project_root, require_runtime_resource
 from tools.plan_parser import ParsedStep, parse_plan_file
 from tools.plan_validator import validate_plan
 
@@ -43,7 +61,7 @@ def compile_plan(
     compiled_path.write_text(json.dumps(compiled, indent=2), encoding="utf-8")
 
     context_path = automation_dir / PLAN_CONTEXT_FILENAME
-    context_path.write_text(compiled["plan_description"], encoding="utf-8")
+    context_path.write_text(compiled[FIELD_PLAN_DESCRIPTION], encoding="utf-8")
 
     return compiled_path
 
@@ -71,11 +89,11 @@ def compile_plan_data(
         raise CompiledPlanError("Project description is required and cannot be empty.")
 
     compiled = {
-        "schema_version": 1,
-        "source_file": str(source_path),
-        "source_sha256": _source_sha256(source_path),
-        "plan_description": plan_description,
-        "steps": [
+        FIELD_SCHEMA_VERSION: 1,
+        FIELD_SOURCE_FILE: str(source_path),
+        FIELD_SOURCE_SHA256: _source_sha256(source_path),
+        FIELD_PLAN_DESCRIPTION: plan_description,
+        PROGRESS_FIELD_STEPS: [
             _compile_step(step, source_text)
             for step in parse_result.steps
         ],
@@ -99,7 +117,7 @@ def load_compiled_plan_for_run(
     compiled = json.loads(compiled_path.read_text(encoding="utf-8"))
     _validate_compiled_plan(compiled)
     expected_sha = _source_sha256(source_path)
-    if compiled.get("source_sha256") != expected_sha:
+    if compiled.get(FIELD_SOURCE_SHA256) != expected_sha:
         raise CompiledPlanDriftError(
             "Compiled plan is stale; recompile before running or resuming."
         )
@@ -114,27 +132,29 @@ def _compile_step(step: ParsedStep, source_text: str) -> dict[str, Any]:
     prompt = _extract_step_body(step, source_text)
     _validate_step_prompt(step, prompt)
     compiled: dict[str, Any] = {
-        "id": step.yaml_block["id"],
-        "title": step.yaml_block["title"],
-        "prompt": prompt,
-        "metadata": step.yaml_block,
+        FIELD_ID: step.yaml_block[FIELD_ID],
+        FIELD_TITLE: step.yaml_block[FIELD_TITLE],
+        FIELD_PROMPT: prompt,
+        FIELD_METADATA: step.yaml_block,
     }
-    if step.yaml_block.get("type") == "HUMAN_GATE":
-        review_guidance = step.yaml_block.get("review_guidance") or step.yaml_block.get("description")
+    if step.yaml_block.get(FIELD_TYPE) == STEP_TYPE_HUMAN_GATE:
+        review_guidance = step.yaml_block.get(
+            FIELD_REVIEW_GUIDANCE
+        ) or step.yaml_block.get(FIELD_DESCRIPTION)
         if review_guidance:
-            compiled["review_guidance"] = review_guidance
+            compiled[FIELD_REVIEW_GUIDANCE] = review_guidance
     return compiled
 
 
 def _validate_step_prompt(step: ParsedStep, prompt: str) -> None:
     """Require task prose for steps that invoke a worker agent."""
-    step_type = step.yaml_block.get("type")
-    invokes_agent = step_type == "IMPLEMENTATION" or bool(
-        step.yaml_block.get("agent") or step.yaml_block.get("model")
+    step_type = step.yaml_block.get(FIELD_TYPE)
+    invokes_agent = step_type == STEP_TYPE_IMPLEMENTATION or bool(
+        step.yaml_block.get(FIELD_AGENT) or step.yaml_block.get(FIELD_MODEL)
     )
     if invokes_agent and not prompt:
         raise CompiledPlanError(
-            f"Step {step.yaml_block['id']} requires non-empty task prose because it invokes an agent."
+            f"Step {step.yaml_block[FIELD_ID]} requires non-empty task prose because it invokes an agent."
         )
 
 
@@ -185,6 +205,9 @@ def _extract_step_body(step: ParsedStep, source_text: str) -> str:
 
 
 def _validate_compiled_plan(compiled: dict[str, Any]) -> None:
-    schema_path = get_project_root() / "schemas" / "compiled-plan.schema.json"
+    schema_path = require_runtime_resource(
+        Path("schemas") / "compiled-plan.schema.json",
+        description="compiled plan schema",
+    )
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     jsonschema.validate(instance=compiled, schema=schema)

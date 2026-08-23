@@ -37,12 +37,27 @@ def generate_whole_plan_report(
     steps = progress.get(PROGRESS_FIELD_STEPS, {})
     done = [sid for sid, s in steps.items() if s[PROGRESS_FIELD_STATE] == STATE_DONE]
     failed = [sid for sid, s in steps.items() if s[PROGRESS_FIELD_STATE] == STATE_FAILED]
-    blocked = [sid for sid, s in steps.items() if s[PROGRESS_FIELD_STATE] == STATE_BLOCKED]
+    gated = [
+        sid
+        for sid, step in steps.items()
+        if step[PROGRESS_FIELD_STATE] == STATE_BLOCKED
+        and (
+            step.get(PROGRESS_FIELD_FAILURE_REASON) is None
+            or (step.get(PROGRESS_FIELD_FAILURE_REASON) or {}).get(FR_CODE)
+            == FAILURE_HUMAN_GATE
+        )
+    ]
+    blocked = [
+        sid
+        for sid, step in steps.items()
+        if step[PROGRESS_FIELD_STATE] == STATE_BLOCKED and sid not in gated
+    ]
 
     lines.append("## Summary\n\n")
     lines.append(f"- Completed: {len(done)}\n")
     lines.append(f"- Failed: {len(failed)}\n")
     lines.append(f"- Blocked: {len(blocked)}\n")
+    lines.append(f"- Gated: {len(gated)}\n")
 
     if stop_reason:
         lines.append(f"- Stop reason: {stop_reason}\n")
@@ -69,12 +84,17 @@ def generate_whole_plan_report(
             msg = fr.get("message", "") if fr else ""
             lines.append(f"- {sid}: {code} — {msg}\n")
 
+    if gated:
+        lines.append("\n## Gated Steps\n\n")
+        for sid in gated:
+            lines.append(f"- {sid}: Human review required\n")
+
     lines.append("\n## Next Action\n\n")
-    if blocked:
-        for sid in blocked:
-            fr = steps[sid].get(PROGRESS_FIELD_FAILURE_REASON, {})
-            if fr and fr.get(FR_CODE) == FAILURE_HUMAN_GATE:
-                lines.append(f"Human review required at {sid}.\n")
+    if gated:
+        for sid in gated:
+            lines.append(f"Human review required at {sid}.\n")
+    elif blocked:
+        lines.append("Resolve blocked steps before resuming.\n")
     elif failed:
         lines.append("Investigate failed steps before resuming.\n")
     else:

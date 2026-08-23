@@ -6,6 +6,15 @@ from enum import Enum
 
 
 # ---------------------------------------------------------------------------
+# Process exit codes
+# ---------------------------------------------------------------------------
+
+EXIT_SUCCESS = 0
+EXIT_EXECUTION_FAILURE = 1
+EXIT_USAGE_VALIDATION_ERROR = 2
+
+
+# ---------------------------------------------------------------------------
 # Script execution outcome (three-state model)
 # ---------------------------------------------------------------------------
 
@@ -39,7 +48,11 @@ FIELD_COMMANDS = "commands"
 FIELD_RETRY = "retry"
 FIELD_MAX_FIX_ATTEMPTS = "max_fix_attempts"
 FIELD_DESCRIPTION = "description"
-FIELD_ARTIFACT_FILES = "artifact_files"
+FIELD_SOURCE_FILE = "source_file"
+FIELD_SOURCE_SHA256 = "source_sha256"
+FIELD_PLAN_DESCRIPTION = "plan_description"
+FIELD_METADATA = "metadata"
+FIELD_REVIEW_GUIDANCE = "review_guidance"
 
 # ---------------------------------------------------------------------------
 # Step types
@@ -91,6 +104,7 @@ FAILURE_AGENT_BLOCKED = "AGENT_BLOCKED"
 FAILURE_INVALID_AGENT_RESULT = "INVALID_AGENT_RESULT"
 FAILURE_VERIFICATION_FAILED = "VERIFICATION_FAILED"
 FAILURE_PRE_ANALYSIS_FAILED = "PRE_ANALYSIS_FAILED"
+FAILURE_CHANGE_DETECTION_UNAVAILABLE = "CHANGE_DETECTION_UNAVAILABLE"
 
 # ---------------------------------------------------------------------------
 # Stop reasons

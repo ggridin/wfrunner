@@ -14,7 +14,7 @@ RUNTIME_RESOURCE_CONTRACTS = (
     Path("schemas/compiled-plan.schema.json"),
     Path("schemas/agent-result.schema.json"),
     Path("schemas/command-summary.schema.json"),
-    Path("docs/schemas/progress.schema.json"),
+    Path("schemas/progress.schema.json"),
     Path("prompts/system_prompt.implementation.md"),
     Path("prompts/system_prompt.analysis.md"),
 )
@@ -91,7 +91,7 @@ def test_pyinstaller_spec_bundles_runtime_schema_contracts() -> None:
     spec_text = Path("wfrunner.spec").read_text(encoding="utf-8")
 
     assert '("schemas/*.json", "schemas")' in spec_text
-    assert '("docs/schemas/*.json", "docs/schemas")' in spec_text
+    assert "docs/schemas" not in spec_text
     assert '("prompts/system_prompt.implementation.md", "prompts")' in spec_text
     assert '("prompts/system_prompt.analysis.md", "prompts")' in spec_text
 
@@ -109,8 +109,7 @@ def test_pyproject_declares_runtime_schema_contracts_for_packaged_install() -> N
 
     assert "schemas" in data_files
     assert "schemas/*.json" in data_files["schemas"]
-    assert "docs/schemas" in data_files
-    assert "docs/schemas/*.json" in data_files["docs/schemas"]
+    assert "docs/schemas" not in data_files
     assert "prompts" in data_files
     assert "prompts/system_prompt.implementation.md" in data_files["prompts"]
     assert "prompts/system_prompt.analysis.md" in data_files["prompts"]

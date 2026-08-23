@@ -178,8 +178,45 @@ The built-in protected paths are:
 - `.github/copilot-instructions.md`
 - `prompts/`
 
+### Gate adjacency is strict
+
+The orchestrator requires the **immediately preceding** step to be a
+`HUMAN_GATE`. An earlier gate elsewhere in the plan does not count, and an
+`ANALYSIS` step placed between the gate and the protected step breaks the pair.
+A plan that gets this wrong stops mid-run with a protected-file violation, after
+every earlier step has already executed and committed.
+
+Author the gate and the protected step as one adjacent pair, and never insert a
+step between them later:
+
+```markdown
+### STEP-014 - Approve the change to run_plan.py      <- HUMAN_GATE
+### STEP-015 - Change run_plan.py                      <- IMPLEMENTATION
+```
+
+### Patterns count as protected too
+
+Protection is evaluated against what an entry *authorizes*, not against its
+literal text. A folder pattern that covers a protected path makes the step a
+protected-path step and requires the same adjacent gate:
+
+- `.github/**` covers `.github/agents/` and `.github/copilot-instructions.md`.
+- `tools/*` covers `tools/run_plan.py` and `tools/validate_plan.py`.
+
+Prefer naming the specific files instead of a broad pattern near protected
+paths, so the step's real scope is visible in review.
+
 Protected-path changes require a prior `HUMAN_GATE`. Keep that gate close to
 the implementation step and describe the decision being approved.
+
+Stopping at a `HUMAN_GATE` is a successful planned pause. New progress records
+use `state: BLOCKED` with `failure_reason: null`, and whole-plan reports list
+the step under **Gated Steps**, not **Blocked Steps**. Auto-approved gates use
+`state: DONE`. Legacy progress records with a populated `HUMAN_GATE` failure
+reason remain valid and are reported as gated.
+
+All runtime JSON schemas, including `progress.schema.json`, live under
+`schemas/`.
 
 ## Verification Authority
 
@@ -193,7 +230,10 @@ verification:
 ```
 
 Choose commands that can falsify the step's work and keep them realistic for
-the files in scope.
+the files in scope. The orchestrator passes each command verbatim to the current
+platform's default shell; it does not normalize quoting or other shell syntax.
+Write `verification.commands` to be portable across every target platform, or
+use a platform-specific plan when portability is not possible.
 
 ## `allowed_files`
 
@@ -201,6 +241,10 @@ the files in scope.
 the implementation step may create or modify, including tests, docs, schemas,
 and scripts. Do not include broad directories unless the step intentionally
 authorizes any file under that directory.
+
+Use `directory/*` to allow only files directly within a directory. Use
+`directory/**` when the step intentionally allows files at every depth under
+that directory; for example, write `docs/**` for recursive documentation scope.
 
 New files must be listed before the step runs. Deletions and renames are not
 allowed in Phase 1 execution.
@@ -216,4 +260,3 @@ implementation.
 Treat the implementation plan as immutable while a run is executing. Runtime
 state belongs under `.automation/`; plan changes belong in separate, explicit
 planning steps.
-

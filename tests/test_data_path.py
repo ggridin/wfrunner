@@ -9,7 +9,12 @@ from unittest.mock import patch
 
 import pytest
 
-from tools.data_path import get_project_root, get_work_project_root
+from tools.data_path import (
+    MissingRuntimeResourceError,
+    get_project_root,
+    get_work_project_root,
+    require_runtime_resource,
+)
 
 
 class TestGetProjectRoot:
@@ -39,8 +44,6 @@ class TestGetProjectRoot:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from tools.data_path import MissingRuntimeResourceError, require_runtime_resource
-
         monkeypatch.setattr("tools.data_path.get_project_root", lambda: tmp_path)
 
         with pytest.raises(MissingRuntimeResourceError) as exc_info:
@@ -51,6 +54,24 @@ class TestGetProjectRoot:
         assert "schemas/config.schema.json" in message
         assert "config schema" in message
         assert "packaged executable" in message
+
+    def test_main_returns_packaging_exit_code_for_missing_bundled_resource(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from tools import wfrunner
+
+        bundle_root = tmp_path / "incomplete-bundle"
+        bundle_root.mkdir()
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+        monkeypatch.chdir(project_root)
+        monkeypatch.setattr("tools.data_path.get_project_root", lambda: bundle_root)
+
+        exit_code = wfrunner.main(["init"])
+
+        assert exit_code == wfrunner.PACKAGING_ERROR_EXIT_CODE
 
 
 class TestGetWorkProjectRoot:

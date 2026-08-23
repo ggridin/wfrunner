@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tools.config import WaterfallRunnerConfig
 from tools.constants import (
     AGENT_DEFAULT,
-    AGENT_STATUS_BLOCKED,
     FIELD_AGENT,
     FIELD_ALLOWED_FILES,
     FIELD_COMMANDS,
@@ -20,6 +20,7 @@ from tools.constants import (
     MODEL_DEFAULT,
 )
 from tools.orchestrator.agent_adapter import AgentAdapter, AgentInvocationRequest, AgentResult
+from tools.orchestrator.agent_invocation import invoke_agent
 from tools.orchestrator.change_detector import ChangeDetector
 from tools.plan_parser import ParsedStep
 
@@ -31,7 +32,10 @@ class FixResult:
     agent_result: AgentResult
     ok: bool = True
     blocked: bool = False
+    failed: bool = False
+    invalid_result: bool = False
     scope_violation: bool = False
+    failure_reason: str | None = None
 
 
 class RetryController:
@@ -51,8 +55,8 @@ class RetryController:
         step_prompt: str = "",
         system_prompt_path: str = "",
         plan_context: str = "",
-        plan_path: str | None = None,
         change_detector: ChangeDetector | None = None,
+        config: WaterfallRunnerConfig | None = None,
     ) -> None:
         self._step = step
         self._adapter = adapter
@@ -63,6 +67,7 @@ class RetryController:
         self._step_prompt = step_prompt
         self._system_prompt_path = system_prompt_path
         self._plan_context = plan_context
+        self._config = config
         self._max_fix_attempts = step.yaml_block.get(FIELD_RETRY, {}).get(FIELD_MAX_FIX_ATTEMPTS, 0)
         self._attempts_used = 0
         self._blocked = False
@@ -73,11 +78,6 @@ class RetryController:
             return False
         return self._attempts_used < self._max_fix_attempts
 
-    def attempts_remaining(self) -> int:
-        """Return the number of fix attempts remaining."""
-        remaining = self._max_fix_attempts - self._attempts_used
-        return max(0, remaining)
-
     def attempt_fix(self) -> FixResult:
         """Invoke the fixer agent for one fix attempt.
 
@@ -87,10 +87,15 @@ class RetryController:
         self._attempts_used += 1
 
         step_yaml = self._step.yaml_block
+        agent_name = step_yaml.get(FIELD_AGENT, AGENT_DEFAULT)
+        model = step_yaml.get(FIELD_MODEL, MODEL_DEFAULT)
+        if self._config is not None:
+            agent_name = self._config.resolve_agent(agent_name)
+            model = self._config.resolve_model(model)
         request = AgentInvocationRequest(
             step_id=step_yaml[FIELD_ID],
-            agent_name=step_yaml.get(FIELD_AGENT, AGENT_DEFAULT),
-            model=step_yaml.get(FIELD_MODEL, MODEL_DEFAULT),
+            agent_name=agent_name,
+            model=model,
             system_prompt_path=self._system_prompt_path,
             step_prompt=self._step_prompt,
             plan_context=self._plan_context,
@@ -104,12 +109,22 @@ class RetryController:
         if self._change_detector is not None:
             self._change_detector.snapshot_before()
 
-        agent_result = self._adapter.invoke(request)
+        invocation_result = invoke_agent(self._adapter, request)
+        agent_result = invocation_result.agent_result
+        if agent_result is None:
+            raise RuntimeError("Agent invocation completed without an agent result.")
 
-        # Handle BLOCKED result.
-        if agent_result.status == AGENT_STATUS_BLOCKED:
-            self._blocked = True
-            return FixResult(agent_result=agent_result, ok=False, blocked=True)
+        if not invocation_result.ok:
+            if invocation_result.blocked:
+                self._blocked = True
+            return FixResult(
+                agent_result=agent_result,
+                ok=False,
+                blocked=invocation_result.blocked,
+                failed=invocation_result.failed,
+                invalid_result=invocation_result.invalid_result,
+                failure_reason=invocation_result.failure_reason,
+            )
 
         # Detect scope violations.
         if self._change_detector is None:

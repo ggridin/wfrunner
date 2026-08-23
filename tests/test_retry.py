@@ -13,15 +13,13 @@ import pytest
 
 from tests.fake_agent import FakeAgentAdapter, FileAction
 from tests.helpers import (
+    make_default_config,
     make_implementation_step,
     make_plan,
 )
 from tools.orchestrator.agent_adapter import AgentInvocationRequest, AgentResult
 from tools.orchestrator.change_detector import FakeChangeDetector
 from tools.plan_parser import parse_plan
-
-DEFAULT_PLAN_PATH = "docs/implementation_plan_8.md"
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -104,7 +102,6 @@ class TestRETRY001MaxFixAttemptsZero:
             adapter=fake,
             automation_dir=tmp_path / ".automation",
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
         )
 
         result = controller.should_retry()
@@ -127,7 +124,6 @@ class TestRETRY001MaxFixAttemptsZero:
             adapter=fake,
             automation_dir=tmp_path / ".automation",
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
         )
 
         # Since should_retry() is False, the adapter should never be called.
@@ -162,7 +158,6 @@ class TestRETRY002OneRetryAllowed:
             adapter=fake,
             automation_dir=tmp_path / ".automation",
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
         )
 
         assert controller.should_retry() is True
@@ -186,7 +181,6 @@ class TestRETRY002OneRetryAllowed:
             adapter=fake,
             automation_dir=automation_dir,
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
         )
 
         fix_result = controller.attempt_fix()
@@ -217,7 +211,6 @@ class TestRETRY002OneRetryAllowed:
             adapter=fake,
             automation_dir=automation_dir,
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
         )
 
         controller.attempt_fix()
@@ -269,7 +262,6 @@ class TestRETRY003FixerSucceedsWithAllowedFiles:
             adapter=fake,
             automation_dir=automation_dir,
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
         )
 
         fix_result = controller.attempt_fix()
@@ -296,7 +288,6 @@ class TestRETRY003FixerSucceedsWithAllowedFiles:
             adapter=fake,
             automation_dir=automation_dir,
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
         )
 
         fix_result = controller.attempt_fix()
@@ -345,7 +336,6 @@ class TestRETRY004FixerModifiesUnlistedFile:
             adapter=fake,
             automation_dir=automation_dir,
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
             change_detector=detector,
         )
 
@@ -385,7 +375,6 @@ class TestRETRY005VerificationStillFailsAfterRetry:
             adapter=fake,
             automation_dir=automation_dir,
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
         )
 
         _fix_result = controller.attempt_fix()
@@ -393,7 +382,7 @@ class TestRETRY005VerificationStillFailsAfterRetry:
         # The fix result itself is ok (agent returned DONE),
         # but the verification runner re-checks separately.
         # The controller reports it exhausted its attempts.
-        assert controller.attempts_remaining() == 0
+        assert controller.should_retry() is False
 
     def test_no_further_retries_after_exhaustion(self, tmp_path: Path) -> None:
         from tools.orchestrator.retry_controller import RetryController
@@ -414,7 +403,6 @@ class TestRETRY005VerificationStillFailsAfterRetry:
             adapter=fake,
             automation_dir=automation_dir,
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
         )
 
         controller.attempt_fix()
@@ -455,7 +443,6 @@ class TestRETRY006FixerReportsAmbiguity:
             adapter=fake,
             automation_dir=automation_dir,
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
         )
 
         fix_result = controller.attempt_fix()
@@ -486,7 +473,6 @@ class TestRETRY006FixerReportsAmbiguity:
             adapter=fake,
             automation_dir=automation_dir,
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
         )
 
         fix_result = controller.attempt_fix()
@@ -516,7 +502,6 @@ class TestRETRY006FixerReportsAmbiguity:
             adapter=fake,
             automation_dir=automation_dir,
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
         )
 
         controller.attempt_fix()
@@ -550,7 +535,6 @@ class TestRETRY007AcceptsChangeDetector:
             adapter=fake,
             automation_dir=tmp_path / ".automation",
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
             change_detector=detector,
         )
 
@@ -571,7 +555,6 @@ class TestRETRY007AcceptsChangeDetector:
             adapter=fake,
             automation_dir=tmp_path / ".automation",
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
         )
 
         assert controller is not None
@@ -612,7 +595,6 @@ class TestRETRY008ChangeDetectorCalledAroundAgent:
             adapter=fake,
             automation_dir=automation_dir,
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
             change_detector=TrackingDetector({}),
         )
 
@@ -654,7 +636,6 @@ class TestRETRY008ChangeDetectorCalledAroundAgent:
             adapter=adapter,
             automation_dir=automation_dir,
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
             change_detector=TrackingDetector({}),
         )
 
@@ -694,7 +675,6 @@ class TestRETRY009ChangeDetectorScopeViolation:
             adapter=fake,
             automation_dir=automation_dir,
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
             change_detector=detector,
         )
 
@@ -725,7 +705,6 @@ class TestRETRY009ChangeDetectorScopeViolation:
             adapter=fake,
             automation_dir=automation_dir,
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
             change_detector=detector,
         )
 
@@ -762,7 +741,6 @@ class TestRETRY010NoChangeDetectorSkipsEnforcement:
             adapter=fake,
             automation_dir=automation_dir,
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
             # No change_detector provided.
         )
 
@@ -788,7 +766,6 @@ class TestRETRY010NoChangeDetectorSkipsEnforcement:
             adapter=fake,
             automation_dir=automation_dir,
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
         )
 
         fix_result = controller.attempt_fix()
@@ -840,7 +817,6 @@ class TestRETRY010NoChangeDetectorSkipsEnforcement:
             adapter=fake,
             automation_dir=automation_dir,
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
             # No change_detector — scope enforcement must be skipped.
         )
 
@@ -882,7 +858,6 @@ class TestRETRY011RetryUsesSameAgent:
             adapter=fake,
             automation_dir=automation_dir,
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
         )
 
         controller.attempt_fix()
@@ -913,7 +888,6 @@ class TestRETRY011RetryUsesSameAgent:
             adapter=fake,
             automation_dir=automation_dir,
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
         )
 
         controller.attempt_fix()
@@ -958,13 +932,91 @@ retry:
             adapter=fake,
             automation_dir=automation_dir,
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
         )
 
         controller.attempt_fix()
 
         invocation = fake.invocations[0]
         assert invocation.agent_name == "default"
+
+
+# ===========================================================================
+# Retry invocation contract: validation and configuration resolution
+# ===========================================================================
+
+
+class TestRetryInvocationContract:
+    """Fix attempts use the same validated, resolved invocation path."""
+
+    def test_malformed_fix_result_is_rejected(self, tmp_path: Path) -> None:
+        from tools.orchestrator.retry_controller import RetryController
+
+        step = _parse_steps(make_plan(_step_with_retry(max_fix_attempts=1)))[0]
+        fake = FakeAgentAdapter()
+        fake.enqueue_malformed_json("{not valid json at all}")
+        controller = RetryController(
+            step=step,
+            adapter=fake,
+            automation_dir=tmp_path / ".automation",
+            failure_summary=_make_failure_summary(),
+        )
+
+        result = controller.attempt_fix()
+
+        assert result.ok is False
+        assert result.invalid_result is True
+        assert result.failure_reason is not None
+
+    def test_step_id_mismatched_fix_result_is_rejected(self, tmp_path: Path) -> None:
+        from tools.orchestrator.retry_controller import RetryController
+
+        step = _parse_steps(make_plan(_step_with_retry(max_fix_attempts=1)))[0]
+        fake = FakeAgentAdapter()
+        fake.enqueue_mismatched_step("STEP-001", returned_step_id="STEP-999")
+        controller = RetryController(
+            step=step,
+            adapter=fake,
+            automation_dir=tmp_path / ".automation",
+            failure_summary=_make_failure_summary(),
+        )
+
+        result = controller.attempt_fix()
+
+        assert result.ok is False
+        assert result.invalid_result is True
+        assert result.failure_reason is not None
+        assert "mismatch" in result.failure_reason
+
+    def test_resolved_agent_and_model_reach_adapter(self, tmp_path: Path) -> None:
+        from tools.orchestrator.retry_controller import RetryController
+
+        step = _parse_steps(
+            make_plan(
+                make_implementation_step(
+                    agent="default",
+                    model="default",
+                    max_fix_attempts=1,
+                )
+            )
+        )[0]
+        fake = FakeAgentAdapter()
+        fake.enqueue_done(step_id="STEP-001")
+        controller = RetryController(
+            step=step,
+            adapter=fake,
+            automation_dir=tmp_path / ".automation",
+            failure_summary=_make_failure_summary(),
+            config=make_default_config(
+                default_agent="resolved-agent",
+                default_model="resolved-model",
+            ),
+        )
+
+        result = controller.attempt_fix()
+
+        assert result.ok is True
+        assert fake.invocations[0].agent_name == "resolved-agent"
+        assert fake.invocations[0].model == "resolved-model"
 
 
 # ===========================================================================
@@ -999,7 +1051,6 @@ class TestRETRY013RequestIncludesFailureContext:
             adapter=fake,
             automation_dir=automation_dir,
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
         )
 
         controller.attempt_fix()
@@ -1033,7 +1084,6 @@ class TestRETRY013RequestIncludesFailureContext:
             adapter=fake,
             automation_dir=automation_dir,
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
         )
 
         controller.attempt_fix()
@@ -1062,7 +1112,6 @@ class TestRETRY013RequestIncludesFailureContext:
             adapter=fake,
             automation_dir=automation_dir,
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
         )
 
         controller.attempt_fix()
@@ -1106,7 +1155,6 @@ class TestRETRY014PromptTemplateReceivesFailureContext:
             adapter=fake,
             automation_dir=automation_dir,
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
         )
 
         controller.attempt_fix()
@@ -1138,7 +1186,6 @@ class TestRETRY014PromptTemplateReceivesFailureContext:
             adapter=fake,
             automation_dir=automation_dir,
             failure_summary=failure_summary,
-            plan_path=DEFAULT_PLAN_PATH,
         )
 
         controller.attempt_fix()
