@@ -10,7 +10,6 @@ from typing import Any, Protocol
 from tools.config import WaterfallRunnerConfig
 from tools.constants import (
     AGENT_DEFAULT,
-    AGENT_STATUS_FAILED,
     FIELD_AGENT,
     FIELD_ALLOWED_FILES,
     FIELD_COMMANDS,
@@ -469,7 +468,9 @@ def execute_implementation_step(context: StepExecutionContext) -> StepExecutionR
                 step_yaml.get(FIELD_TYPE), context.automation_dir
             ),
             plan_context=context.plan_context,
+            config=context.config,
         )
+        retry_failure: StepExecutionResult | None = None
         while (
             not verification_result.ok
             and not verification_has_script_error
@@ -477,11 +478,26 @@ def execute_implementation_step(context: StepExecutionContext) -> StepExecutionR
         ):
             fix_result = retry_controller.attempt_fix()
             fix_attempts += 1
-            if (
-                fix_result.scope_violation
-                or fix_result.blocked
-                or fix_result.agent_result.status == AGENT_STATUS_FAILED
-            ):
+            if not fix_result.ok:
+                # An invalid retry result must never reach verification: a
+                # malformed or step-ID-mismatched result commonly still carries
+                # status DONE, and rerunning verification could mark the step
+                # DONE on the strength of an uncontracted agent's side effects.
+                if fix_result.invalid_result:
+                    retry_failure = StepExecutionResult(
+                        outcome=StepOutcome.INVALID_AGENT_RESULT,
+                        failure_reason={
+                            FR_CODE: FAILURE_INVALID_AGENT_RESULT,
+                            FR_MESSAGE: (
+                                fix_result.failure_reason
+                                or "Retry returned an invalid agent result."
+                            ),
+                        },
+                        agent=agent_name,
+                        extra_fields={PROGRESS_FIELD_FIX_ATTEMPTS: fix_attempts},
+                        message=f"Invalid agent result on retry at {step_id}.",
+                        message_is_error=True,
+                    )
                 break
             verification_result = context.verification_runner(
                 step,
@@ -492,6 +508,9 @@ def execute_implementation_step(context: StepExecutionContext) -> StepExecutionR
             verification_has_script_error = _has_script_error(
                 verification_result.command_results
             )
+
+        if retry_failure is not None:
+            return retry_failure
 
     verification_fields = {
         PROGRESS_FIELD_FIX_ATTEMPTS: fix_attempts,

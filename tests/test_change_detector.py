@@ -186,3 +186,43 @@ class TestGitChangeDetector:
 
         assert detector.snapshot_before() is None
         assert detector.detect_changes() == {}
+
+    def test_baseline_excludes_pre_existing_changes(self, tmp_path: Path) -> None:
+        # Regression (REVIEW-005): ANALYSIS steps may run on a dirty tree. A raw
+        # status would attribute pre-existing changes to the analysis agent.
+        repo = _init_repo(tmp_path)
+        _commit_baseline(repo, "tracked.txt")
+        (repo / "tracked.txt").write_text("pre-existing", encoding="utf-8")
+        detector = GitChangeDetector(repo)
+
+        detector.snapshot_before()
+
+        assert detector.detect_changes() == {}
+
+    def test_baseline_reports_only_changes_made_after_the_snapshot(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _init_repo(tmp_path)
+        _commit_baseline(repo, "tracked.txt")
+        (repo / "tracked.txt").write_text("pre-existing", encoding="utf-8")
+        detector = GitChangeDetector(repo)
+        detector.snapshot_before()
+
+        (repo / "agent.txt").write_text("agent output", encoding="utf-8")
+
+        assert detector.detect_changes() == {"agent.txt": "created"}
+
+    def test_baseline_reports_reverted_pre_existing_change(
+        self, tmp_path: Path
+    ) -> None:
+        # Regression (REVIEW-005): reverting a pre-existing change is itself a
+        # tree modification and must not read as a clean run.
+        repo = _init_repo(tmp_path)
+        _commit_baseline(repo, "tracked.txt")
+        (repo / "tracked.txt").write_text("pre-existing", encoding="utf-8")
+        detector = GitChangeDetector(repo)
+        detector.snapshot_before()
+
+        (repo / "tracked.txt").write_text("baseline", encoding="utf-8")
+
+        assert detector.detect_changes() == {"tracked.txt": "modified"}

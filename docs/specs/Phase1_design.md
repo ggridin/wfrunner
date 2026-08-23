@@ -237,7 +237,7 @@ Rules:
 
 ## Orchestrator configuration
 
-WaterfallRunner reads runtime configuration from `.wfrunner/wfrunner.toml`. `wfrunner run` requires this file unless `--config` points to another TOML file. `wfrunner validate` may run without config, but then protected-path validation is skipped. The file is Git-ignored and user-local.
+WaterfallRunner reads runtime configuration from `.wfrunner/wfrunner.toml`. `wfrunner run` requires this file unless `--config` points to another TOML file. `wfrunner validate` may run without config; protected-path validation then falls back to the built-in protected-path floor. The file is Git-ignored and user-local.
 
 | Setting | Default |
 |---|---|

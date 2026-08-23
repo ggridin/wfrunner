@@ -12,7 +12,7 @@ from tools.constants import (
     VIOLATION_PROTECTED_FILE,
 )
 from tools.plan_parser import ParsedStep
-from tools.protected_paths import is_protected_path
+from tools.protected_paths import allowed_entry_covers_protected_path
 
 
 @dataclass
@@ -101,7 +101,9 @@ def check_protected_files(
         return result
 
     allowed_files = step.yaml_block.get(FIELD_ALLOWED_FILES, [])
-    protected_in_step = [f for f in allowed_files if is_protected_path(f, protected_paths)]
+    protected_in_step = [
+        f for f in allowed_files if allowed_entry_covers_protected_path(f, protected_paths)
+    ]
 
     if not protected_in_step:
         return result

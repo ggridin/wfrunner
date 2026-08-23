@@ -178,6 +178,34 @@ The built-in protected paths are:
 - `.github/copilot-instructions.md`
 - `prompts/`
 
+### Gate adjacency is strict
+
+The orchestrator requires the **immediately preceding** step to be a
+`HUMAN_GATE`. An earlier gate elsewhere in the plan does not count, and an
+`ANALYSIS` step placed between the gate and the protected step breaks the pair.
+A plan that gets this wrong stops mid-run with a protected-file violation, after
+every earlier step has already executed and committed.
+
+Author the gate and the protected step as one adjacent pair, and never insert a
+step between them later:
+
+```markdown
+### STEP-014 - Approve the change to run_plan.py      <- HUMAN_GATE
+### STEP-015 - Change run_plan.py                      <- IMPLEMENTATION
+```
+
+### Patterns count as protected too
+
+Protection is evaluated against what an entry *authorizes*, not against its
+literal text. A folder pattern that covers a protected path makes the step a
+protected-path step and requires the same adjacent gate:
+
+- `.github/**` covers `.github/agents/` and `.github/copilot-instructions.md`.
+- `tools/*` covers `tools/run_plan.py` and `tools/validate_plan.py`.
+
+Prefer naming the specific files instead of a broad pattern near protected
+paths, so the step's real scope is visible in review.
+
 Protected-path changes require a prior `HUMAN_GATE`. Keep that gate close to
 the implementation step and describe the decision being approved.
 

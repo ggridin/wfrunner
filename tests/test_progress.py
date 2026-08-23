@@ -17,6 +17,7 @@ from tests.helpers import (
     make_progress,
     write_progress,
 )
+from tools.constants import FAILURE_CHANGE_DETECTION_UNAVAILABLE
 try:
     from tools.orchestrator.progress_manager import ProgressValidationError, load_progress
 except ImportError:  # TDD: STEP-009 introduces ProgressValidationError.
@@ -672,6 +673,34 @@ class TestProgressSchemaValidationOnLoad:
                     "failure_reason": {
                         "code": "HUMAN_GATE",
                         "message": "Human review required at STEP-001.",
+                    },
+                },
+            }
+        )
+        progress_path = tmp_path / "progress.json"
+        write_progress(progress_path, progress)
+
+        loaded = load_progress(progress_path)
+
+        assert loaded == progress
+
+    def test_change_detection_unavailable_block_survives_resume(
+        self, tmp_path: Path
+    ) -> None:
+        """Regression (REVIEW-003): the recoverable block must reload on resume.
+
+        run_plan writes CHANGE_DETECTION_UNAVAILABLE when git change detection
+        cannot be initialized. If the schema rejects that code, load_progress
+        fails on resume and masks the real cause as INVALID_PROGRESS_FILE.
+        """
+        progress = make_progress(
+            steps={
+                "STEP-001": {
+                    "state": "BLOCKED",
+                    "completed_at": "2025-01-01T00:01:00Z",
+                    "failure_reason": {
+                        "code": FAILURE_CHANGE_DETECTION_UNAVAILABLE,
+                        "message": "Git change detection is unavailable.",
                     },
                 },
             }

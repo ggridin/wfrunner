@@ -374,7 +374,7 @@ Consequences:
 - `run_plan.py` exports orchestration functions such as `prepare_run()`, `reset_run()`, `reset_current_step()`, and `run()`.
 - Removed legacy flat run flags stay removed; equivalent behavior now lives in subcommands, config, or next-step mode where applicable.
 - `wfrunner run` uses a required plan path and config-loaded defaults.
-- `wfrunner validate` can run without config, skipping protected-path validation in that case.
+- `wfrunner validate` can run without config, validating protected-path rules against the built-in protected-path floor in that case.
 
 ## ADR-019 — Script command results distinguish FAIL from ERROR
 

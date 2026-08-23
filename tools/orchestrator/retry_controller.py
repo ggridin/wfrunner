@@ -67,7 +67,7 @@ class RetryController:
         self._step_prompt = step_prompt
         self._system_prompt_path = system_prompt_path
         self._plan_context = plan_context
-        self._config = config or getattr(adapter, "config", None)
+        self._config = config
         self._max_fix_attempts = step.yaml_block.get(FIELD_RETRY, {}).get(FIELD_MAX_FIX_ATTEMPTS, 0)
         self._attempts_used = 0
         self._blocked = False

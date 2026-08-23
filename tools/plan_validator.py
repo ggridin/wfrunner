@@ -21,7 +21,7 @@ from tools.constants import (
     STEP_TYPE_IMPLEMENTATION,
 )
 from tools.plan_parser import ParseResult, ParsedStep
-from tools.protected_paths import is_protected_path
+from tools.protected_paths import allowed_entry_covers_protected_path
 
 
 @dataclass
@@ -217,7 +217,9 @@ def _validate_protected_files(
         if not isinstance(allowed_files, list):
             continue
 
-        protected_files = [f for f in allowed_files if is_protected_path(f, protected_paths)]
+        protected_files = [
+            f for f in allowed_files if allowed_entry_covers_protected_path(f, protected_paths)
+        ]
         if not protected_files:
             continue
 

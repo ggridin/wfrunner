@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,15 +15,53 @@ from tests.helpers import (
     make_implementation_step,
     make_plan,
 )
-from tools.constants import STEP_TYPE_ANALYSIS, STEP_TYPE_IMPLEMENTATION
+from tools.constants import (
+    FAILURE_INVALID_AGENT_RESULT,
+    FR_CODE,
+    PROGRESS_FIELD_FIX_ATTEMPTS,
+    STEP_TYPE_ANALYSIS,
+    STEP_TYPE_IMPLEMENTATION,
+)
 from tools.orchestrator.change_detector import FakeChangeDetector
+from tools.orchestrator.outcomes import StepOutcome
 from tools.orchestrator.step_executor import (
     StepExecutionContext,
     execute_step,
     get_step_handler,
 )
+from tools.orchestrator.verification import (
+    ScriptOutcome,
+    VerificationCommandResult,
+    VerificationResult,
+)
 from tools.plan_parser import parse_plan
 from tools.run_plan import prepare_run, run
+
+
+def _verification(outcome: ScriptOutcome, status: str) -> VerificationResult:
+    return VerificationResult(
+        command_results=[
+            VerificationCommandResult(
+                command_index=0,
+                command="python -c pass",
+                exit_code=0 if outcome is ScriptOutcome.PASS else 1,
+                status=status,
+                duration_seconds=0.01,
+                stdout_tail="",
+                stderr_tail="",
+                log_path="log.txt",
+                outcome=outcome,
+            )
+        ]
+    )
+
+
+def _passing_verification() -> VerificationResult:
+    return _verification(ScriptOutcome.PASS, "PASS")
+
+
+def _failing_verification() -> VerificationResult:
+    return _verification(ScriptOutcome.FAIL, "FAIL")
 
 
 def _parse_step(step_block: str):
@@ -145,3 +184,74 @@ def test_run_uses_injected_adapter_factory_for_each_step_type(
     assert exit_code == 0
     assert factory_calls == [(config, automation_dir)]
     assert adapter.invocations[0].step_id == "STEP-001"
+
+
+def test_invalid_retry_result_fails_step_even_if_verification_then_passes(
+    tmp_path: Path,
+) -> None:
+    """An uncontracted retry result must not be laundered into DONE.
+
+    A malformed or step-ID-mismatched result usually still carries status DONE,
+    so the retry loop must stop on it rather than rerun verification and accept
+    whatever side effects the invalid agent happened to leave behind.
+    """
+    adapter = FakeAgentAdapter()
+    adapter.enqueue_done("STEP-001")
+    adapter.enqueue_mismatched_step("STEP-001", "STEP-999")
+    context = _context(
+        tmp_path,
+        make_implementation_step(
+            allowed_files=["src/allowed.py"],
+            verification_commands=['"python -c \\"print(1)\\""'],
+            max_fix_attempts=1,
+        ),
+        adapter,
+        FakeChangeDetector({"src/allowed.py": "modified"}),
+    )
+
+    verification_results = iter([_failing_verification(), _passing_verification()])
+    context = replace(
+        context,
+        verification_runner=lambda *_args, **_kwargs: next(verification_results),
+    )
+
+    result = execute_step(context)
+
+    assert not result.completed
+    assert result.outcome is StepOutcome.INVALID_AGENT_RESULT
+    assert result.failure_reason[FR_CODE] == FAILURE_INVALID_AGENT_RESULT
+    assert result.extra_fields[PROGRESS_FIELD_FIX_ATTEMPTS] == 1
+
+
+def test_retry_resolves_agent_and_model_without_adapter_config_attribute(
+    tmp_path: Path,
+) -> None:
+    """Retries must resolve names from the run config, not from the adapter."""
+    adapter = FakeAgentAdapter()
+    assert not hasattr(adapter, "config")
+    adapter.enqueue_done("STEP-001")
+    adapter.enqueue_done("STEP-001")
+    context = _context(
+        tmp_path,
+        make_implementation_step(
+            allowed_files=["src/allowed.py"],
+            verification_commands=['"python -c \\"print(1)\\""'],
+            max_fix_attempts=1,
+        ),
+        adapter,
+        FakeChangeDetector({"src/allowed.py": "modified"}),
+    )
+
+    verification_results = iter([_failing_verification(), _passing_verification()])
+    context = replace(
+        context,
+        verification_runner=lambda *_args, **_kwargs: next(verification_results),
+    )
+
+    result = execute_step(context)
+
+    assert result.completed
+    retry_invocation = adapter.invocations[1]
+    assert retry_invocation.agent_name == context.config.resolve_agent("default")
+    assert retry_invocation.model == context.config.resolve_model("default")
+    assert retry_invocation.agent_name != "default"

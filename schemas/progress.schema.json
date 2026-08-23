@@ -185,6 +185,7 @@
             "VERIFICATION_TIMEOUT",
             "HUMAN_GATE",
             "DIRTY_WORKTREE",
+            "CHANGE_DETECTION_UNAVAILABLE",
             "PLAN_VALIDATION_FAILED",
             "MAX_STEPS_REACHED",
             "INVALID_PROGRESS_FILE"

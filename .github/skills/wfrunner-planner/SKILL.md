@@ -38,6 +38,7 @@ renumbering STEP IDs.
 | Use `### STEP-001 - Title` headings with one YAML block per step. | Add custom YAML fields that the schema does not allow. |
 | Keep `allowed_files` strict, repository-relative, and complete. | Treat verification prose as a substitute for executable commands. |
 | Use `IMPLEMENTATION` only for file-changing work. | Put `agent`, `allowed_files`, or `retry` on `HUMAN_GATE` steps. |
+| Author a protected-path step and its `HUMAN_GATE` together, as an adjacent pair. | Rely on an earlier gate, or let an `ANALYSIS` step sit between the gate and the protected step. |
 | Validate after plan edits and after renumbering. | Leave duplicate, skipped, or non-contiguous step IDs. |
 
 ## Workflow
